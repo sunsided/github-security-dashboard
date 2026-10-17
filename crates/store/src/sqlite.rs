@@ -4,10 +4,10 @@ use crate::alerts::{self, *};
 use crate::api::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use sqlx::Row;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
 };
-use sqlx::{AssertSqlSafe, Row};
 use std::str::FromStr;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/sqlite");
@@ -45,7 +45,13 @@ impl SqliteStore {
     }
 }
 
-const REPO_COLUMNS: &str = "
+// SQL fragments are macros rather than constants so that queries are put
+// together with `concat!` at compile time. The result is a `&'static str`,
+// which sqlx accepts as safe as-is; a runtime value can't end up in the SQL
+// text without a compile error.
+macro_rules! repo_columns {
+    () => {
+        "
     r.id, r.owner, r.name, r.kind, r.url, r.description, r.archived, r.fork,
     r.private, r.language, r.default_branch, r.last_seen_run,
     s.run_id AS s_run_id, s.taken_at AS s_taken_at, s.open_issues AS s_open_issues,
@@ -53,10 +59,14 @@ const REPO_COLUMNS: &str = "
     s.tags AS s_tags, s.releases AS s_releases, s.stars AS s_stars, s.forks AS s_forks,
     s.pushed_at AS s_pushed_at, s.last_commit_at AS s_last_commit_at,
     COALESCE(a.critical, 0) AS a_critical, COALESCE(a.high, 0) AS a_high,
-    COALESCE(a.medium, 0) AS a_medium, COALESCE(a.low, 0) AS a_low";
+    COALESCE(a.medium, 0) AS a_medium, COALESCE(a.low, 0) AS a_low"
+    };
+}
 
 /// Latest snapshot and open alert counts per repository.
-const REPO_JOINS: &str = "
+macro_rules! repo_joins {
+    () => {
+        "
     LEFT JOIN repo_snapshots s
         ON s.repo_id = r.id
        AND s.run_id = (SELECT MAX(run_id) FROM repo_snapshots WHERE repo_id = r.id)
@@ -67,14 +77,24 @@ const REPO_JOINS: &str = "
                SUM(severity = 'medium') AS medium,
                SUM(severity = 'low') AS low
         FROM alerts WHERE state = 'open' GROUP BY repo_id
-    ) a ON a.repo_id = r.id";
+    ) a ON a.repo_id = r.id"
+    };
+}
 
-const ALERT_COLUMNS: &str = "
+macro_rules! alert_columns {
+    () => {
+        "
     id, repo_id, source, number, state, severity, title, location, html_url,
-    created_at, closed_at, estimated, first_seen_run, last_seen_run";
+    created_at, closed_at, estimated, first_seen_run, last_seen_run"
+    };
+}
 
-const SEVERITY_ORDER: &str = "
-    CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END";
+macro_rules! severity_order {
+    () => {
+        "
+    CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END"
+    };
+}
 
 fn repo_from_row(row: &SqliteRow) -> Result<RepoOverview> {
     let kind: String = row.try_get("kind")?;
@@ -277,15 +297,18 @@ impl Store for SqliteStore {
     }
 
     async fn list_repos(&self, filter: &RepoFilter) -> Result<Vec<RepoOverview>> {
-        let sql = format!(
-            "SELECT {REPO_COLUMNS} FROM repos r {REPO_JOINS}
+        let sql = concat!(
+            "SELECT ",
+            repo_columns!(),
+            " FROM repos r ",
+            repo_joins!(),
+            "
              WHERE (?1 IS NULL OR r.owner = ?1)
                AND (?2 IS NULL OR r.kind = ?2)
                AND (?3 OR r.archived = 0)
              ORDER BY r.owner, r.name"
         );
-        // Only compile-time constants are interpolated; values are bound.
-        let rows = sqlx::query(AssertSqlSafe(sql))
+        let rows = sqlx::query(sql)
             .bind(&filter.owner)
             .bind(filter.kind.map(RepoKind::as_str))
             .bind(filter.include_archived)
@@ -295,11 +318,15 @@ impl Store for SqliteStore {
     }
 
     async fn get_repo(&self, owner: &str, name: &str) -> Result<Option<RepoOverview>> {
-        let sql = format!(
-            "SELECT {REPO_COLUMNS} FROM repos r {REPO_JOINS}
+        let sql = concat!(
+            "SELECT ",
+            repo_columns!(),
+            " FROM repos r ",
+            repo_joins!(),
+            "
              WHERE r.owner = ? AND r.name = ?"
         );
-        let row = sqlx::query(AssertSqlSafe(sql))
+        let row = sqlx::query(sql)
             .bind(owner)
             .bind(name)
             .fetch_optional(&self.pool)
@@ -352,10 +379,12 @@ impl Store for SqliteStore {
         let mut events = 0;
 
         for alert in alerts {
-            let sql = format!(
-                "SELECT {ALERT_COLUMNS} FROM alerts WHERE repo_id = ? AND source = ? AND number = ?"
+            let sql = concat!(
+                "SELECT ",
+                alert_columns!(),
+                " FROM alerts WHERE repo_id = ? AND source = ? AND number = ?"
             );
-            let previous = sqlx::query(AssertSqlSafe(sql))
+            let previous = sqlx::query(sql)
                 .bind(repo.0)
                 .bind(alert.source.as_str())
                 .bind(alert.number)
@@ -420,13 +449,16 @@ impl Store for SqliteStore {
     }
 
     async fn list_alerts(&self, repo: RepoId, filter: &AlertFilter) -> Result<Vec<Alert>> {
-        // Only compile-time constants are interpolated; values are bound.
-        let sql = format!(
-            "SELECT {ALERT_COLUMNS} FROM alerts
+        let sql = concat!(
+            "SELECT ",
+            alert_columns!(),
+            " FROM alerts
              WHERE repo_id = ?1 AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR state = ?3)
-             ORDER BY state = 'open' DESC, {SEVERITY_ORDER}, created_at DESC, number DESC"
+             ORDER BY state = 'open' DESC, ",
+            severity_order!(),
+            ", created_at DESC, number DESC"
         );
-        let rows = sqlx::query(AssertSqlSafe(sql))
+        let rows = sqlx::query(sql)
             .bind(repo.0)
             .bind(filter.source.map(AlertSource::as_str))
             .bind(filter.state.map(AlertState::as_str))

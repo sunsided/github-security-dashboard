@@ -28,6 +28,8 @@ Other tasks worth knowing (`task` alone lists all of them):
 | `task test` | Rust and UI tests |
 | `task check` | Formatting, clippy, ESLint, svelte-check |
 | `task ci` | `check`, `test` and the UI build, as CI would run them |
+| `task db:up` | A development PostgreSQL on `127.0.0.1:54329` (Docker Compose) |
+| `task test:postgres` | The storage contract tests against that PostgreSQL |
 
 For a sense of scale: the first run against my own account (718 repositories, plus two external ones) takes about three minutes and some 700 requests, most of them contributor counts. Later runs reuse ETags where GitHub supports them, and those don't count against the quota.
 
@@ -78,12 +80,12 @@ Work in progress. The plan, roughly in order:
 2. ~~Alerts from Dependabot, code scanning and secret scanning (organization-wide endpoints where possible, per repository otherwise), severity scoring and a detail page.~~ Done.
 3. ~~GitHub App authentication.~~ Done.
 4. ~~External repositories: when I can't read their alerts (GitHub only shows them to admins and security managers), the server pulls the dependency SBOM and matches it against [OSV](https://osv.dev). Those numbers are labeled as estimates, because that's what they are.~~ Done.
-5. A PostgreSQL backend for keeping the audit history long term.
+5. ~~A PostgreSQL backend for keeping the audit history long term.~~ Done.
 6. A digest of newly opened alerts by email or Slack.
 
 ## Design notes
 
-- **Storage is pluggable.** The application talks to a `Store` trait; SQLite is the default, PostgreSQL is planned for audit-grade retention. Snapshots and alert state changes are append-only, so "what was open on March 3rd" stays answerable.
+- **Storage is pluggable.** The application talks to a `Store` trait; SQLite is the default, PostgreSQL the choice for keeping the audit history somewhere with backups and a retention policy. `storage.url` decides (`sqlite://dashboard.db` or `postgres://…`), and both backends pass the same contract test suite. Snapshots and alert state changes are append-only, enforced by triggers in both databases (PostgreSQL also refuses `TRUNCATE`), so "what was open on March 3rd" stays answerable.
 - **Rate limits are respected.** The client honors `x-ratelimit-*` and `retry-after` headers and uses conditional requests where GitHub supports them.
 - **No authentication in v1.** The server binds to `127.0.0.1` by default. The data it holds is a list of your weak spots, so please don't expose it as-is.
 

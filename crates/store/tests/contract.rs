@@ -557,74 +557,184 @@ pub async fn first_collected_run_survives_failures(store: Arc<dyn Store>) {
     check!(first(store.source_statuses(id).await.unwrap()) == Some(run2));
 }
 
+/// Instantiates every contract check for one backend. `$open` receives the
+/// test's name, so backends can give each test its own database.
 macro_rules! contract_tests {
-    ($backend:ident, $open:expr) => {
+    ($backend:ident, $open:path) => {
         mod $backend {
             use super::*;
 
-            async fn open() -> Arc<dyn Store> {
-                $open.await
-            }
-
             #[tokio::test]
             async fn runs_round_trip() {
-                super::runs_round_trip(open().await).await
+                super::runs_round_trip($open(stringify!(runs_round_trip)).await).await
             }
 
             #[tokio::test]
             async fn upsert_is_keyed_case_insensitively() {
-                super::upsert_is_keyed_case_insensitively(open().await).await
+                super::upsert_is_keyed_case_insensitively(
+                    $open(stringify!(upsert_is_keyed_case_insensitively)).await,
+                )
+                .await
             }
 
             #[tokio::test]
             async fn overview_carries_latest_snapshot() {
-                super::overview_carries_latest_snapshot(open().await).await
+                super::overview_carries_latest_snapshot(
+                    $open(stringify!(overview_carries_latest_snapshot)).await,
+                )
+                .await
             }
 
             #[tokio::test]
             async fn repo_without_snapshot_has_no_latest() {
-                super::repo_without_snapshot_has_no_latest(open().await).await
+                super::repo_without_snapshot_has_no_latest(
+                    $open(stringify!(repo_without_snapshot_has_no_latest)).await,
+                )
+                .await
             }
 
             #[tokio::test]
             async fn snapshots_are_append_only() {
-                super::snapshots_are_append_only(open().await).await
+                super::snapshots_are_append_only($open(stringify!(snapshots_are_append_only)).await)
+                    .await
             }
 
             #[tokio::test]
             async fn list_filters() {
-                super::list_filters(open().await).await
+                super::list_filters($open(stringify!(list_filters)).await).await
             }
 
             #[tokio::test]
             async fn alert_lifecycle_is_audited() {
-                super::alert_lifecycle_is_audited(open().await).await
+                super::alert_lifecycle_is_audited(
+                    $open(stringify!(alert_lifecycle_is_audited)).await,
+                )
+                .await
             }
 
             #[tokio::test]
             async fn alerts_are_scoped_by_repo_and_source() {
-                super::alerts_are_scoped_by_repo_and_source(open().await).await
+                super::alerts_are_scoped_by_repo_and_source(
+                    $open(stringify!(alerts_are_scoped_by_repo_and_source)).await,
+                )
+                .await
             }
 
             #[tokio::test]
             async fn source_status_is_upserted() {
-                super::source_status_is_upserted(open().await).await
+                super::source_status_is_upserted($open(stringify!(source_status_is_upserted)).await)
+                    .await
             }
 
             #[tokio::test]
             async fn baseline_events_are_filtered_on_request() {
-                super::baseline_events_are_filtered_on_request(open().await).await
+                super::baseline_events_are_filtered_on_request(
+                    $open(stringify!(baseline_events_are_filtered_on_request)).await,
+                )
+                .await
             }
 
             #[tokio::test]
             async fn first_collected_run_survives_failures() {
-                super::first_collected_run_survives_failures(open().await).await
+                super::first_collected_run_survives_failures(
+                    $open(stringify!(first_collected_run_survives_failures)).await,
+                )
+                .await
             }
         }
     };
 }
 
 #[cfg(feature = "sqlite")]
-contract_tests!(sqlite, async {
+async fn open_sqlite(_test: &str) -> Arc<dyn Store> {
     store::connect("sqlite::memory:").await.unwrap()
-});
+}
+
+#[cfg(feature = "sqlite")]
+contract_tests!(sqlite, open_sqlite);
+
+/// PostgreSQL connection for the contract tests, from `DATABASE_URL_PG`
+/// (`task test:postgres` sets it).
+#[cfg(feature = "postgres")]
+fn postgres_url() -> String {
+    std::env::var("DATABASE_URL_PG").expect(
+        "DATABASE_URL_PG must point at a PostgreSQL database for the postgres contract tests; \
+         start one with `task db:up` and run `task test:postgres`",
+    )
+}
+
+/// Each test gets a fresh schema of its own, recreated on every run.
+#[cfg(feature = "postgres")]
+async fn postgres_schema(test: &str) -> String {
+    use sqlx::Connection;
+
+    let url = postgres_url();
+    let schema = format!("contract_{test}");
+    // Test function names are plain identifiers; anything else is a bug here.
+    assert2::assert!(
+        schema
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "unexpected schema name {schema:?}"
+    );
+    let mut admin = sqlx::PgConnection::connect(&url).await.unwrap();
+    for ddl in [
+        format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"),
+        format!("CREATE SCHEMA \"{schema}\""),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(ddl))
+            .execute(&mut admin)
+            .await
+            .unwrap();
+    }
+    admin.close().await.unwrap();
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}options=-c%20search_path%3D{schema}")
+}
+
+#[cfg(feature = "postgres")]
+async fn open_postgres(test: &str) -> Arc<dyn Store> {
+    store::connect(&postgres_schema(test).await).await.unwrap()
+}
+
+#[cfg(feature = "postgres")]
+contract_tests!(postgres, open_postgres);
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_audit_tables_reject_changes() {
+    let url = postgres_schema("audit_triggers").await;
+    let store = store::connect(&url).await.unwrap();
+    let run = store.begin_run(t0()).await.unwrap();
+    let id = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run)
+        .await
+        .unwrap();
+    store
+        .insert_snapshot(id, run, t0(), &stats(1))
+        .await
+        .unwrap();
+    store
+        .record_alerts(
+            id,
+            run,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::High)],
+            false,
+        )
+        .await
+        .unwrap();
+
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    for sql in [
+        "UPDATE alert_events SET kind = 'fixed'",
+        "DELETE FROM alert_events",
+        "TRUNCATE alert_events",
+        "UPDATE repo_snapshots SET open_issues = 99",
+        "DELETE FROM repo_snapshots",
+        "TRUNCATE repo_snapshots",
+    ] {
+        let err = sqlx::query(sql).execute(&pool).await.unwrap_err();
+        check!(err.to_string().contains("append-only"), "{sql}: {err}");
+    }
+}

@@ -56,6 +56,8 @@ pub(crate) use string_enum;
 
 mod alerts;
 mod api;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
@@ -66,11 +68,17 @@ pub use api::*;
 
 /// Opens the backend matching `url` and applies pending migrations.
 ///
-/// Supported schemes: `sqlite:` (feature `sqlite`).
+/// Supported schemes: `sqlite:` (feature `sqlite`), `postgres:` and
+/// `postgresql:` (feature `postgres`).
 pub async fn connect(url: &str) -> Result<Arc<dyn Store>> {
     #[cfg(feature = "sqlite")]
     if url.starts_with("sqlite:") {
         return Ok(Arc::new(sqlite::SqliteStore::connect(url).await?));
+    }
+
+    #[cfg(feature = "postgres")]
+    if url.starts_with("postgres:") || url.starts_with("postgresql:") {
+        return Ok(Arc::new(postgres::PostgresStore::connect(url).await?));
     }
 
     Err(StoreError::UnsupportedUrl(scheme_of(url).to_owned()))
