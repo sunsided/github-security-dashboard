@@ -4,11 +4,13 @@
 //! GraphQL, a handful of REST endpoints, rate limit handling and conditional
 //! requests. Authentication is pluggable through [`TokenProvider`].
 
+mod alerts;
 mod auth;
 mod client;
 mod link;
 mod repos;
 
+pub use alerts::{AlertKind, AlertSeverity, AlertStatus, SecurityAlert};
 pub use auth::{PatProvider, Secret, TokenProvider};
 pub use client::{ClientConfig, GitHub, GraphQlError, RateLimit};
 pub use link::{find_rel, last_page};
@@ -42,6 +44,15 @@ pub enum Error {
 }
 
 impl Error {
+    /// GitHub's own explanation where there is one ("Code scanning is not
+    /// enabled for this repository."), the full error otherwise.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Status { message, .. } if !message.is_empty() => message.clone(),
+            other => other.to_string(),
+        }
+    }
+
     /// `403` or `404`, i.e. the token can't see this resource or the feature
     /// is disabled for the repository.
     pub fn is_inaccessible(&self) -> bool {

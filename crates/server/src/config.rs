@@ -25,6 +25,38 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub collector: CollectorConfig,
+    #[serde(default)]
+    pub scoring: Scoring,
+}
+
+/// Weights of open alerts per severity in a repository's risk score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Scoring {
+    pub critical: i64,
+    pub high: i64,
+    pub medium: i64,
+    pub low: i64,
+}
+
+impl Default for Scoring {
+    fn default() -> Self {
+        Self {
+            critical: 10,
+            high: 5,
+            medium: 2,
+            low: 1,
+        }
+    }
+}
+
+impl Scoring {
+    pub fn score(&self, counts: &store::SeverityCounts) -> i64 {
+        self.critical * counts.critical
+            + self.high * counts.high
+            + self.medium * counts.medium
+            + self.low * counts.low
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,29 +137,42 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     #[test]
     fn example_config_parses() {
         let config = Config::parse(include_str!("../../../config.example.toml")).unwrap();
-        assert!(!config.collector.owners.is_empty());
-        assert!(config.listen.ip().is_loopback());
+        check!(!config.collector.owners.is_empty());
+        check!(config.listen.ip().is_loopback());
     }
 
     #[test]
     fn minimal_config_uses_defaults() {
         let config = Config::parse("[collector]\nowners = [\"acme\"]").unwrap();
-        assert_eq!(config.listen, default_listen());
-        assert_eq!(config.poll_interval, Duration::from_secs(1800));
-        assert_eq!(config.storage.url, "sqlite://dashboard.db");
-        assert_eq!(config.auth.token_env, "GITHUB_TOKEN");
-        assert_eq!(config.collector.page_size, 25);
+        check!(config.listen == default_listen());
+        check!(config.poll_interval == Duration::from_secs(1800));
+        check!(config.storage.url == "sqlite://dashboard.db");
+        check!(config.auth.token_env == "GITHUB_TOKEN");
+        check!(config.collector.page_size == 25);
+        check!(config.scoring == Scoring::default());
+    }
+
+    #[test]
+    fn scores_weight_severities() {
+        let counts = store::SeverityCounts {
+            critical: 1,
+            high: 2,
+            medium: 0,
+            low: 3,
+        };
+        check!(Scoring::default().score(&counts) == 10 + 2 * 5 + 3);
     }
 
     #[test]
     fn rejects_empty_and_invalid_configs() {
-        assert!(Config::parse("").is_err());
-        assert!(Config::parse("[collector]\nexternal_repos = [\"nope\"]").is_err());
-        assert!(Config::parse("typo = 1\n[collector]\nowners = [\"a\"]").is_err());
-        assert!(Config::parse("poll_interval = \"5s\"\n[collector]\nowners = [\"a\"]").is_err());
+        check!(Config::parse("").is_err());
+        check!(Config::parse("[collector]\nexternal_repos = [\"nope\"]").is_err());
+        check!(Config::parse("typo = 1\n[collector]\nowners = [\"a\"]").is_err());
+        check!(Config::parse("poll_interval = \"5s\"\n[collector]\nowners = [\"a\"]").is_err());
     }
 }

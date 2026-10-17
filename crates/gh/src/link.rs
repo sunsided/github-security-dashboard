@@ -31,30 +31,30 @@ pub fn last_page(header: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     const HEADER: &str = r#"<https://api.github.com/repositories/1/contributors?per_page=1&anon=1&page=2>; rel="next", <https://api.github.com/repositories/1/contributors?per_page=1&anon=1&page=137>; rel="last""#;
 
     #[test]
     fn finds_relations() {
-        assert_eq!(
-            find_rel(HEADER, "next"),
-            Some("https://api.github.com/repositories/1/contributors?per_page=1&anon=1&page=2")
+        check!(
+            find_rel(HEADER, "next")
+                == Some(
+                    "https://api.github.com/repositories/1/contributors?per_page=1&anon=1&page=2"
+                )
         );
-        assert_eq!(find_rel(HEADER, "prev"), None);
+        check!(find_rel(HEADER, "prev") == None);
     }
 
     #[test]
     fn last_page_is_the_count() {
-        assert_eq!(last_page(HEADER), Some(137));
-        assert_eq!(last_page(r#"<https://x/y?page=2>; rel="next""#), None);
-        assert_eq!(last_page(""), None);
+        check!(last_page(HEADER) == Some(137));
+        check!(last_page(r#"<https://x/y?page=2>; rel="next""#) == None);
+        check!(last_page("") == None);
     }
 
     #[test]
     fn page_param_is_not_confused_with_per_page() {
-        assert_eq!(
-            last_page(r#"<https://x/y?per_page=1&page=9>; rel="last""#),
-            Some(9)
-        );
+        check!(last_page(r#"<https://x/y?per_page=1&page=9>; rel="last""#) == Some(9));
     }
 }

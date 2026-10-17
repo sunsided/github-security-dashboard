@@ -1,3 +1,4 @@
+use assert2::check;
 use collector::{Collector, CollectorConfig, RepoRef};
 use gh::{ClientConfig, GitHub, PatProvider, Secret};
 use serde_json::{Value, json};
@@ -120,35 +121,35 @@ async fn collects_owners_and_external_repos() {
         .await
         .unwrap();
 
-    assert_eq!(summary.repos, 4);
-    assert_eq!(summary.status, RunStatus::Partial);
-    assert_eq!(summary.errors.len(), 1, "{:?}", summary.errors);
-    assert!(summary.errors[0].starts_with("owner ghost"));
+    check!(summary.repos == 4);
+    check!(summary.status == RunStatus::Partial);
+    check!(summary.errors.len() == 1, "{:?}", summary.errors);
+    check!(summary.errors[0].starts_with("owner ghost"));
 
     let repos = store.list_repos(&RepoFilter::default()).await.unwrap();
     let kinds: Vec<_> = repos
         .iter()
         .map(|r| (format!("{}/{}", r.info.owner, r.info.name), r.info.kind))
         .collect();
-    assert_eq!(
-        kinds,
-        [
-            ("acme/api".to_owned(), RepoKind::Org),
-            ("acme/web".to_owned(), RepoKind::Org),
-            ("me/dotfiles".to_owned(), RepoKind::User),
-            ("sveltejs/kit".to_owned(), RepoKind::External),
-        ]
+    check!(
+        kinds
+            == [
+                ("acme/api".to_owned(), RepoKind::Org),
+                ("acme/web".to_owned(), RepoKind::Org),
+                ("me/dotfiles".to_owned(), RepoKind::User),
+                ("sveltejs/kit".to_owned(), RepoKind::External),
+            ]
     );
 
     let latest = repos[0].latest.as_ref().unwrap();
-    assert_eq!(latest.run_id, summary.run);
-    assert_eq!(latest.stats.contributors, Some(3));
-    assert_eq!(latest.stats.commits, Some(10));
-    assert_eq!(latest.stats.open_issues, 4);
+    check!(latest.run_id == summary.run);
+    check!(latest.stats.contributors == Some(3));
+    check!(latest.stats.commits == Some(10));
+    check!(latest.stats.open_issues == 4);
 
     let runs = store.list_runs(1).await.unwrap();
-    assert_eq!(runs[0].status, RunStatus::Partial);
-    assert!(runs[0].finished_at.is_some());
+    check!(runs[0].status == RunStatus::Partial);
+    check!(runs[0].finished_at.is_some());
 }
 
 #[tokio::test]
@@ -164,6 +165,6 @@ async fn run_fails_when_nothing_could_be_collected() {
         .run()
         .await
         .unwrap();
-    assert_eq!(summary.status, RunStatus::Failed);
-    assert_eq!(summary.repos, 0);
+    check!(summary.status == RunStatus::Failed);
+    check!(summary.repos == 0);
 }

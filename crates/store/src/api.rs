@@ -1,10 +1,9 @@
 //! Backend-independent domain types and the [`Store`] trait.
 
+use crate::alerts::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::str::FromStr;
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 
@@ -30,80 +29,26 @@ pub struct RunId(pub i64);
 #[serde(transparent)]
 pub struct RepoId(pub i64);
 
-/// How a repository came to be tracked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RepoKind {
-    /// Owned by a configured organization.
-    Org,
-    /// Owned by a configured user account.
-    User,
-    /// Explicitly listed, owned by someone else.
-    External,
-}
-
-impl RepoKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Org => "org",
-            Self::User => "user",
-            Self::External => "external",
-        }
+crate::string_enum! {
+    /// How a repository came to be tracked.
+    pub enum RepoKind {
+        /// Owned by a configured organization.
+        Org = "org",
+        /// Owned by a configured user account.
+        User = "user",
+        /// Explicitly listed, owned by someone else.
+        External = "external",
     }
 }
 
-impl fmt::Display for RepoKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for RepoKind {
-    type Err = StoreError;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "org" => Ok(Self::Org),
-            "user" => Ok(Self::User),
-            "external" => Ok(Self::External),
-            other => Err(StoreError::InvalidData(format!("repo kind {other:?}"))),
-        }
-    }
-}
-
-/// Outcome of a collector run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Running,
-    Succeeded,
-    /// Finished, but some owners or repositories could not be collected.
-    Partial,
-    Failed,
-}
-
-impl RunStatus {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Succeeded => "succeeded",
-            Self::Partial => "partial",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-impl FromStr for RunStatus {
-    type Err = StoreError;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "running" => Ok(Self::Running),
-            "succeeded" => Ok(Self::Succeeded),
-            "partial" => Ok(Self::Partial),
-            "failed" => Ok(Self::Failed),
-            other => Err(StoreError::InvalidData(format!("run status {other:?}"))),
-        }
+crate::string_enum! {
+    /// Outcome of a collector run.
+    pub enum RunStatus {
+        Running = "running",
+        Succeeded = "succeeded",
+        /// Finished, but some owners or repositories could not be collected.
+        Partial = "partial",
+        Failed = "failed",
     }
 }
 
@@ -165,6 +110,7 @@ pub struct RepoOverview {
     pub info: RepoInfo,
     pub last_seen_run: RunId,
     pub latest: Option<Snapshot>,
+    pub open_alerts: SeverityCounts,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,4 +158,41 @@ pub trait Store: Send + Sync {
 
     /// Most recent snapshots first.
     async fn snapshot_history(&self, repo: RepoId, limit: u32) -> Result<Vec<Snapshot>>;
+
+    /// Stores the observed state of alerts of one repository and appends an
+    /// audit event for every change, atomically. `baseline` flags the events
+    /// as describing pre-existing alerts (first read of a source). Returns
+    /// the number of events written.
+    async fn record_alerts(
+        &self,
+        repo: RepoId,
+        run: RunId,
+        at: DateTime<Utc>,
+        alerts: &[AlertRecord],
+        baseline: bool,
+    ) -> Result<usize>;
+
+    /// Alerts of a repository, most severe first.
+    async fn list_alerts(&self, repo: RepoId, filter: &AlertFilter) -> Result<Vec<Alert>>;
+
+    /// Most recent events first.
+    async fn alert_events(&self, filter: &EventFilter) -> Result<Vec<AlertEvent>>;
+
+    async fn set_source_status(
+        &self,
+        repo: RepoId,
+        source: AlertSource,
+        run: RunId,
+        at: DateTime<Utc>,
+        status: SourceStatus,
+        message: Option<&str>,
+    ) -> Result<()>;
+
+    async fn source_statuses(&self, repo: RepoId) -> Result<Vec<RepoSource>>;
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlertFilter {
+    pub source: Option<AlertSource>,
+    pub state: Option<AlertState>,
 }

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { requestRefresh, type Repo, type RepoKind } from '#lib/api.js';
+	import { requestRefresh, SEVERITIES, type Repo, type RepoKind, type Severity } from '#lib/api.js';
 	import ActivityBadge from '#lib/components/ActivityBadge.svelte';
+	import SeverityBadge, { SEVERITY_GLYPHS } from '#lib/components/SeverityBadge.svelte';
 	import StatTile from '#lib/components/StatTile.svelte';
 	import { activity, formatCount, formatDateTime } from '#lib/format.js';
 	import type { PageProps } from './$types';
@@ -11,6 +12,8 @@
 
 	type SortKey =
 		| 'name'
+		| 'risk_score'
+		| Severity
 		| 'open_issues'
 		| 'open_prs'
 		| 'contributors'
@@ -19,8 +22,10 @@
 		| 'releases'
 		| 'days_since_commit';
 
-	const columns: { key: SortKey; label: string; numeric: boolean }[] = [
+	const columns: { key: SortKey; label: string; numeric: boolean; severity?: Severity }[] = [
 		{ key: 'name', label: 'Repository', numeric: false },
+		{ key: 'risk_score', label: 'Risk', numeric: true },
+		...SEVERITIES.map((s) => ({ key: s, label: s, numeric: true, severity: s })),
 		{ key: 'open_issues', label: 'Issues', numeric: true },
 		{ key: 'open_prs', label: 'PRs', numeric: true },
 		{ key: 'contributors', label: 'Contributors', numeric: true },
@@ -30,12 +35,13 @@
 		{ key: 'days_since_commit', label: 'Last commit', numeric: true }
 	];
 
-	let sortKey = $state<SortKey>('open_issues');
+	let sortKey = $state<SortKey>('risk_score');
 	let descending = $state(true);
 	let search = $state('');
 	let owner = $state('');
 	let kind = $state<RepoKind | ''>('');
 	let showArchived = $state(false);
+	let onlyAlerts = $state(false);
 	let refreshing = $state(false);
 	let refreshError = $state<string | null>(null);
 
@@ -47,6 +53,13 @@
 				return `${repo.owner}/${repo.name}`.toLowerCase();
 			case 'days_since_commit':
 				return repo.days_since_commit;
+			case 'risk_score':
+				return repo.risk_score;
+			case 'critical':
+			case 'high':
+			case 'medium':
+			case 'low':
+				return repo.open_alerts[key];
 			default:
 				return repo.latest?.[key] ?? null;
 		}
@@ -59,14 +72,15 @@
 				(showArchived || !r.archived) &&
 				(!owner || r.owner === owner) &&
 				(!kind || r.kind === kind) &&
+				(!onlyAlerts || r.risk_score > 0) &&
 				(!needle || `${r.owner}/${r.name}`.toLowerCase().includes(needle))
 		);
 		const direction = descending ? -1 : 1;
 		return rows.sort((a, b) => {
 			const x = sortValue(a, sortKey);
 			const y = sortValue(b, sortKey);
-			// Missing values sort last in either direction.
-			if (x === y) return 0;
+			// Missing values sort last in either direction; ties go by name.
+			if (x === y) return `${a.owner}/${a.name}`.localeCompare(`${b.owner}/${b.name}`);
 			if (x === null) return 1;
 			if (y === null) return -1;
 			return (x < y ? -1 : 1) * direction;
@@ -100,6 +114,7 @@
 	}
 
 	const lastRun = $derived(data.summary.last_run);
+	const alertTotal = $derived(SEVERITIES.reduce((sum, s) => sum + data.summary.open_alerts[s], 0));
 	const graphql = $derived(data.summary.rate_limits['graphql']);
 </script>
 
@@ -129,7 +144,16 @@
 </section>
 
 <section class="tiles" aria-label="Summary">
-	<StatTile label="Tracked repositories" value={formatCount(data.summary.repos)} />
+	<StatTile
+		label="Open security alerts"
+		value={formatCount(alertTotal)}
+		hint={SEVERITIES.map((s) => `${data.summary.open_alerts[s]} ${s}`).join(' · ')}
+	/>
+	<StatTile
+		label="Repositories with alerts"
+		value={formatCount(data.summary.repos_with_alerts)}
+		hint="of {formatCount(data.summary.repos)} tracked"
+	/>
 	<StatTile label="Open issues" value={formatCount(data.summary.open_issues)} />
 	<StatTile label="Open pull requests" value={formatCount(data.summary.open_prs)} />
 	<StatTile
@@ -166,6 +190,10 @@
 		<option value="external">External</option>
 	</select>
 	<label>
+		<input type="checkbox" bind:checked={onlyAlerts} />
+		Only with alerts
+	</label>
+	<label>
 		<input type="checkbox" bind:checked={showArchived} />
 		Show archived
 	</label>
@@ -186,6 +214,11 @@
 							: undefined}
 					>
 						<button onclick={() => sortBy(column.key)}>
+							{#if column.severity}
+								<span class="sev-head {column.severity}" aria-hidden="true">
+									{SEVERITY_GLYPHS[column.severity]}
+								</span>
+							{/if}
 							{column.label}
 							<span class="arrow" aria-hidden="true">
 								{sortKey === column.key ? (descending ? '↓' : '↑') : ''}
@@ -199,11 +232,20 @@
 			{#each visible as repo (repo.id)}
 				<tr class:archived={repo.archived}>
 					<td>
-						<!-- External link to GitHub, not an app route. -->
-						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-						<a href={repo.url} target="_blank" rel="noreferrer">
+						<a href={resolve('/repo/[owner]/[name]', { owner: repo.owner, name: repo.name })}>
 							<span class="owner">{repo.owner}/</span>{repo.name}
 						</a>
+						<!-- External link to GitHub, not an app route. -->
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
+						<a
+							class="external"
+							href={repo.url}
+							target="_blank"
+							rel="noreferrer"
+							title="Open on GitHub"
+							aria-label="{repo.owner}/{repo.name} on GitHub">↗</a
+						>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						<span class="tags">
 							{#if repo.kind === 'external'}<span class="tag">external</span>{/if}
 							{#if repo.archived}<span class="tag">archived</span>{/if}
@@ -211,6 +253,14 @@
 							{#if repo.private}<span class="tag">private</span>{/if}
 						</span>
 					</td>
+					<td class="numeric tabular risk" class:zero={repo.risk_score === 0}>
+						{repo.risk_score}
+					</td>
+					{#each SEVERITIES as severity (severity)}
+						<td class="numeric">
+							<SeverityBadge {severity} count={repo.open_alerts[severity]} />
+						</td>
+					{/each}
 					<td class="numeric tabular">{formatCount(repo.latest?.open_issues)}</td>
 					<td class="numeric tabular">{formatCount(repo.latest?.open_prs)}</td>
 					<td class="numeric tabular">{formatCount(repo.latest?.contributors)}</td>
@@ -388,6 +438,45 @@
 	}
 
 	.owner {
+		color: var(--ink-muted);
+	}
+
+	.external {
+		margin-left: 0.3rem;
+		color: var(--ink-muted);
+		font-size: 0.85em;
+	}
+
+	.risk {
+		font-weight: 600;
+	}
+
+	.risk.zero {
+		color: var(--ink-muted);
+		font-weight: normal;
+	}
+
+	th button {
+		text-transform: capitalize;
+	}
+
+	.sev-head {
+		font-size: 0.75em;
+	}
+
+	.sev-head.critical {
+		color: var(--critical);
+	}
+
+	.sev-head.high {
+		color: var(--serious);
+	}
+
+	.sev-head.medium {
+		color: var(--warning);
+	}
+
+	.sev-head.low {
 		color: var(--ink-muted);
 	}
 

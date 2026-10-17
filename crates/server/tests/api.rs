@@ -1,3 +1,4 @@
+use assert2::check;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use chrono::{Duration, Utc};
@@ -5,10 +6,13 @@ use collector::{Collector, CollectorConfig};
 use gh::{ClientConfig, GitHub, PatProvider, Secret};
 use serde_json::Value;
 use server::api::AppState;
+use server::config::Scoring;
 use server::guard::{AllowedHosts, CSRF_HEADER};
 use server::scheduler::Scheduler;
 use std::sync::Arc;
-use store::{RepoInfo, RepoKind, RepoStats, RunStatus};
+use store::{
+    AlertRecord, AlertSource, AlertState, RepoInfo, RepoKind, RepoStats, RunStatus, Severity,
+};
 use tower::ServiceExt;
 
 async fn seeded_state() -> AppState {
@@ -37,6 +41,30 @@ async fn seeded_state() -> AppState {
             ..RepoStats::default()
         };
         store.insert_snapshot(id, run, now, &stats).await.unwrap();
+        if name == "dusty" {
+            let alert = |number, severity| AlertRecord {
+                source: AlertSource::Dependabot,
+                number,
+                state: AlertState::Open,
+                severity,
+                title: format!("advisory {number}"),
+                location: Some("npm/lodash".into()),
+                html_url: format!("https://github.com/acme/dusty/security/dependabot/{number}"),
+                created_at: now,
+                closed_at: None,
+                estimated: false,
+            };
+            store
+                .record_alerts(
+                    id,
+                    run,
+                    now,
+                    &[alert(1, Severity::Critical), alert(2, Severity::Low)],
+                    false,
+                )
+                .await
+                .unwrap();
+        }
     }
     store
         .finish_run(run, now, RunStatus::Succeeded, Some(4999), &[])
@@ -67,6 +95,7 @@ async fn seeded_state() -> AppState {
         store,
         github,
         scheduler,
+        scoring: Scoring::default(),
     }
 }
 
@@ -98,62 +127,68 @@ async fn call(state: AppState, method: &str, uri: &str) -> (StatusCode, Value) {
 #[tokio::test]
 async fn lists_repositories_with_staleness() {
     let (status, body) = call(seeded_state().await, "GET", "/api/repos").await;
-    assert_eq!(status, StatusCode::OK);
+    check!(status == StatusCode::OK);
     let repos = body.as_array().unwrap();
-    assert_eq!(repos.len(), 2);
+    check!(repos.len() == 2);
 
     let dusty = &repos[0];
-    assert_eq!(dusty["name"], "dusty");
-    assert_eq!(dusty["kind"], "org");
-    assert_eq!(dusty["stale"], true);
-    assert_eq!(dusty["days_since_commit"], 400);
-    assert_eq!(dusty["latest"]["open_issues"], 1);
+    check!(dusty["name"] == "dusty");
+    check!(dusty["kind"] == "org");
+    check!(dusty["stale"] == true);
+    check!(dusty["days_since_commit"] == 400);
+    check!(dusty["latest"]["open_issues"] == 1);
+    check!(dusty["open_alerts"]["critical"] == 1);
+    check!(dusty["risk_score"] == 11);
 
-    assert_eq!(repos[1]["stale"], false);
+    check!(repos[1]["stale"] == false);
 }
 
 #[tokio::test]
 async fn filters_by_kind() {
     let (status, body) = call(seeded_state().await, "GET", "/api/repos?kind=external").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.as_array().unwrap().len(), 0);
+    check!(status == StatusCode::OK);
+    check!(body.as_array().unwrap().len() == 0);
 }
 
 #[tokio::test]
 async fn repository_detail_and_not_found() {
     let state = seeded_state().await;
     let (status, body) = call(state.clone(), "GET", "/api/repos/ACME/fresh").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"], "fresh");
-    assert_eq!(body["history"].as_array().unwrap().len(), 1);
+    check!(status == StatusCode::OK);
+    check!(body["name"] == "fresh");
+    check!(body["history"].as_array().unwrap().len() == 1);
+    check!(body["alerts"].as_array().unwrap().len() == 0);
 
     let (status, _) = call(state, "GET", "/api/repos/acme/nope").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    check!(status == StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn summary_aggregates_latest_snapshots() {
     let (status, body) = call(seeded_state().await, "GET", "/api/summary").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["repos"], 2);
-    assert_eq!(body["stale_repos"], 1);
-    assert_eq!(body["open_issues"], 4);
-    assert_eq!(body["open_prs"], 2);
-    assert_eq!(body["collecting"], false);
-    assert_eq!(body["last_run"]["status"], "succeeded");
-    assert_eq!(body["last_run"]["rate_limit_remaining"], 4999);
+    check!(status == StatusCode::OK);
+    check!(body["repos"] == 2);
+    check!(body["stale_repos"] == 1);
+    check!(body["open_issues"] == 4);
+    check!(body["open_prs"] == 2);
+    check!(body["open_alerts"]["critical"] == 1);
+    check!(body["open_alerts"]["low"] == 1);
+    check!(body["repos_with_alerts"] == 1);
+    check!(body["collecting"] == false);
+    check!(body["last_run"]["status"] == "succeeded");
+    check!(body["last_run"]["rate_limit_remaining"] == 4999);
 }
 
 #[tokio::test]
 async fn refresh_is_accepted() {
     let (status, _) = call(seeded_state().await, "POST", "/api/refresh").await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    check!(status == StatusCode::ACCEPTED);
 }
 
 #[tokio::test]
 async fn unknown_api_paths_are_404_not_spa() {
     let (status, _) = call(seeded_state().await, "GET", "/api/nope").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    check!(status == StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -165,7 +200,7 @@ async fn rejects_foreign_host_names() {
         .body(Body::empty())
         .unwrap();
     let (status, _) = send(seeded_state().await, request).await;
-    assert_eq!(status, StatusCode::MISDIRECTED_REQUEST);
+    check!(status == StatusCode::MISDIRECTED_REQUEST);
 }
 
 #[tokio::test]
@@ -177,5 +212,35 @@ async fn refresh_requires_custom_header() {
         .body(Body::empty())
         .unwrap();
     let (status, _) = send(seeded_state().await, request).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    check!(status == StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn repository_detail_lists_alerts_and_events() {
+    let (status, body) = call(seeded_state().await, "GET", "/api/repos/acme/dusty").await;
+    check!(status == StatusCode::OK);
+    let alerts = body["alerts"].as_array().unwrap();
+    check!(alerts.len() == 2);
+    check!(alerts[0]["severity"] == "critical", "most severe first");
+    check!(alerts[0]["source"] == "dependabot");
+    check!(body["events"].as_array().unwrap().len() == 2);
+    check!(body["events"][0]["kind"] == "opened");
+}
+
+#[tokio::test]
+async fn event_feed_spans_repositories() {
+    // The seeded alerts are ordinary (non-baseline) events.
+    let (status, body) = call(seeded_state().await, "GET", "/api/events?limit=1").await;
+    check!(status == StatusCode::OK);
+    let events = body.as_array().unwrap();
+    check!(events.len() == 1);
+    check!(events[0]["repo"] == "dusty");
+
+    let (_, none) = call(
+        seeded_state().await,
+        "GET",
+        "/api/events?since=2999-01-01T00:00:00Z",
+    )
+    .await;
+    check!(none.as_array().unwrap().len() == 0);
 }

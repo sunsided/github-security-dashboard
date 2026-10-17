@@ -8,6 +8,7 @@
 
 	const links = [
 		{ route: '/', label: 'Repositories' },
+		{ route: '/activity', label: 'Activity' },
 		{ route: '/runs', label: 'Runs' }
 	] as const;
 </script>

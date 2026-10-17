@@ -3,9 +3,13 @@
 //! Each check is a plain async function over `Arc<dyn Store>`; the
 //! `contract_tests!` macro instantiates all of them for one backend.
 
+use assert2::check;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::sync::Arc;
-use store::{RepoFilter, RepoInfo, RepoKind, RepoStats, RunStatus, Store};
+use store::{
+    AlertFilter, AlertRecord, AlertSource, AlertState, EventFilter, EventKind, RepoFilter,
+    RepoInfo, RepoKind, RepoStats, RunStatus, Severity, SourceStatus, Store,
+};
 
 fn t0() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap()
@@ -56,16 +60,16 @@ pub async fn runs_round_trip(store: Arc<dyn Store>) {
         .unwrap();
 
     let runs = store.list_runs(10).await.unwrap();
-    assert_eq!(runs.len(), 2);
-    assert_eq!(runs[0].id, second, "most recent first");
-    assert_eq!(runs[0].status, RunStatus::Running);
-    assert_eq!(runs[0].finished_at, None);
-    assert_eq!(runs[1].status, RunStatus::Partial);
-    assert_eq!(runs[1].rate_limit_remaining, Some(4321));
-    assert_eq!(runs[1].errors, vec!["acme: 403".to_owned()]);
-    assert_eq!(runs[1].finished_at, Some(t0() + Duration::minutes(1)));
+    check!(runs.len() == 2);
+    check!(runs[0].id == second, "most recent first");
+    check!(runs[0].status == RunStatus::Running);
+    check!(runs[0].finished_at == None);
+    check!(runs[1].status == RunStatus::Partial);
+    check!(runs[1].rate_limit_remaining == Some(4321));
+    check!(runs[1].errors == vec!["acme: 403".to_owned()]);
+    check!(runs[1].finished_at == Some(t0() + Duration::minutes(1)));
 
-    assert_eq!(store.list_runs(1).await.unwrap().len(), 1);
+    check!(store.list_runs(1).await.unwrap().len() == 1);
 }
 
 pub async fn upsert_is_keyed_case_insensitively(store: Arc<dyn Store>) {
@@ -80,11 +84,11 @@ pub async fn upsert_is_keyed_case_insensitively(store: Arc<dyn Store>) {
     changed.archived = true;
     let id2 = store.upsert_repo(&changed, run2).await.unwrap();
 
-    assert_eq!(id1, id2);
+    check!(id1 == id2);
     let stored = store.get_repo("ACME", "WIDGET").await.unwrap().unwrap();
-    assert!(stored.info.archived);
-    assert_eq!(stored.info.owner, "acme", "takes the latest spelling");
-    assert_eq!(stored.last_seen_run, run2);
+    check!(stored.info.archived);
+    check!(stored.info.owner == "acme", "takes the latest spelling");
+    check!(stored.last_seen_run == run2);
 }
 
 pub async fn overview_carries_latest_snapshot(store: Arc<dyn Store>) {
@@ -110,14 +114,14 @@ pub async fn overview_carries_latest_snapshot(store: Arc<dyn Store>) {
 
     let overview = store.get_repo("acme", "widget").await.unwrap().unwrap();
     let latest = overview.latest.unwrap();
-    assert_eq!(latest.run_id, run2);
-    assert_eq!(latest.stats, stats(11));
+    check!(latest.run_id == run2);
+    check!(latest.stats == stats(11));
 
     let history = store.snapshot_history(id, 10).await.unwrap();
-    assert_eq!(history.len(), 2);
-    assert_eq!(history[0].stats.open_issues, 11);
-    assert_eq!(history[1].stats.open_issues, 10);
-    assert_eq!(history[1].taken_at, t0());
+    check!(history.len() == 2);
+    check!(history[0].stats.open_issues == 11);
+    check!(history[1].stats.open_issues == 10);
+    check!(history[1].taken_at == t0());
 }
 
 pub async fn repo_without_snapshot_has_no_latest(store: Arc<dyn Store>) {
@@ -127,8 +131,8 @@ pub async fn repo_without_snapshot_has_no_latest(store: Arc<dyn Store>) {
         .await
         .unwrap();
     let overview = store.get_repo("acme", "empty").await.unwrap().unwrap();
-    assert!(overview.latest.is_none());
-    assert!(store.get_repo("acme", "missing").await.unwrap().is_none());
+    check!(overview.latest.is_none());
+    check!(store.get_repo("acme", "missing").await.unwrap().is_none());
 }
 
 pub async fn snapshots_are_append_only(store: Arc<dyn Store>) {
@@ -141,7 +145,7 @@ pub async fn snapshots_are_append_only(store: Arc<dyn Store>) {
         .insert_snapshot(id, run, t0(), &stats(1))
         .await
         .unwrap();
-    assert!(
+    check!(
         store
             .insert_snapshot(id, run, t0(), &stats(2))
             .await
@@ -180,10 +184,7 @@ pub async fn list_filters(store: Arc<dyn Store>) {
     };
 
     let all = store.list_repos(&RepoFilter::default()).await.unwrap();
-    assert_eq!(
-        names(all),
-        ["acme/a", "acme/b", "me/dotfiles", "rust-lang/cargo"]
-    );
+    check!(names(all) == ["acme/a", "acme/b", "me/dotfiles", "rust-lang/cargo"]);
 
     let with_archived = store
         .list_repos(&RepoFilter {
@@ -192,7 +193,7 @@ pub async fn list_filters(store: Arc<dyn Store>) {
         })
         .await
         .unwrap();
-    assert_eq!(with_archived.len(), 5);
+    check!(with_archived.len() == 5);
 
     let acme = store
         .list_repos(&RepoFilter {
@@ -201,7 +202,7 @@ pub async fn list_filters(store: Arc<dyn Store>) {
         })
         .await
         .unwrap();
-    assert_eq!(names(acme), ["acme/a", "acme/b"]);
+    check!(names(acme) == ["acme/a", "acme/b"]);
 
     let external = store
         .list_repos(&RepoFilter {
@@ -210,7 +211,350 @@ pub async fn list_filters(store: Arc<dyn Store>) {
         })
         .await
         .unwrap();
-    assert_eq!(names(external), ["rust-lang/cargo"]);
+    check!(names(external) == ["rust-lang/cargo"]);
+}
+
+fn alert(number: i64, state: AlertState, severity: Severity) -> AlertRecord {
+    AlertRecord {
+        source: AlertSource::Dependabot,
+        number,
+        state,
+        severity,
+        title: format!("advisory {number}"),
+        location: Some("serde_json".into()),
+        html_url: format!("https://github.com/acme/widget/security/dependabot/{number}"),
+        created_at: t0() - Duration::days(1),
+        closed_at: None,
+        estimated: false,
+    }
+}
+
+pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
+    let run1 = store.begin_run(t0()).await.unwrap();
+    let repo = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run1)
+        .await
+        .unwrap();
+
+    let opened = store
+        .record_alerts(
+            repo,
+            run1,
+            t0(),
+            &[
+                alert(1, AlertState::Open, Severity::High),
+                alert(2, AlertState::Open, Severity::Low),
+            ],
+            false,
+        )
+        .await
+        .unwrap();
+    check!(opened == 2);
+
+    let overview = store.get_repo("acme", "widget").await.unwrap().unwrap();
+    check!((overview.open_alerts.high, overview.open_alerts.low) == (1, 1));
+    check!(overview.open_alerts.total() == 2);
+
+    // Seeing the same state again changes nothing.
+    let run2 = store.begin_run(t0() + Duration::hours(1)).await.unwrap();
+    let unchanged = store
+        .record_alerts(
+            repo,
+            run2,
+            t0() + Duration::hours(1),
+            &[
+                alert(1, AlertState::Open, Severity::High),
+                alert(2, AlertState::Open, Severity::Low),
+            ],
+            false,
+        )
+        .await
+        .unwrap();
+    check!(unchanged == 0);
+
+    let run3 = store.begin_run(t0() + Duration::hours(2)).await.unwrap();
+    let mut fixed = alert(2, AlertState::Fixed, Severity::Low);
+    fixed.closed_at = Some(t0() + Duration::hours(2));
+    let changed = store
+        .record_alerts(
+            repo,
+            run3,
+            t0() + Duration::hours(2),
+            &[alert(1, AlertState::Open, Severity::Critical), fixed],
+            false,
+        )
+        .await
+        .unwrap();
+    check!(changed == 2);
+
+    let overview = store.get_repo("acme", "widget").await.unwrap().unwrap();
+    check!(overview.open_alerts.critical == 1);
+    check!(overview.open_alerts.total() == 1);
+
+    let open = store
+        .list_alerts(
+            repo,
+            &AlertFilter {
+                state: Some(AlertState::Open),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    check!(open.len() == 1);
+    check!(open[0].record.severity == Severity::Critical);
+    check!(open[0].first_seen_run == run1);
+    check!(open[0].last_seen_run == run3);
+
+    let all = store
+        .list_alerts(repo, &AlertFilter::default())
+        .await
+        .unwrap();
+    check!(all.len() == 2);
+    check!(all[0].record.state == AlertState::Open, "open alerts first");
+    check!(all[1].record.closed_at == Some(t0() + Duration::hours(2)));
+
+    let events = store
+        .alert_events(&EventFilter {
+            repo: Some(repo),
+            since: None,
+            limit: 10,
+            include_baseline: false,
+        })
+        .await
+        .unwrap();
+    let kinds: Vec<_> = events.iter().map(|e| (e.number, e.kind)).collect();
+    check!(
+        kinds
+            == [
+                (2, EventKind::Fixed),
+                (1, EventKind::SeverityChanged),
+                (2, EventKind::Opened),
+                (1, EventKind::Opened),
+            ]
+    );
+    check!(events[1].old.as_deref() == Some("high"));
+    check!(events[1].new.as_deref() == Some("critical"));
+    check!((events[0].owner.as_str(), events[0].repo.as_str()) == ("acme", "widget"));
+
+    let recent = store
+        .alert_events(&EventFilter {
+            repo: None,
+            since: Some(t0() + Duration::minutes(90)),
+            limit: 10,
+            include_baseline: false,
+        })
+        .await
+        .unwrap();
+    check!(recent.len() == 2);
+}
+
+pub async fn alerts_are_scoped_by_repo_and_source(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let a = store
+        .upsert_repo(&repo("acme", "a", RepoKind::Org), run)
+        .await
+        .unwrap();
+    let b = store
+        .upsert_repo(&repo("acme", "b", RepoKind::Org), run)
+        .await
+        .unwrap();
+
+    let mut secret = alert(1, AlertState::Open, Severity::Critical);
+    secret.source = AlertSource::SecretScanning;
+    store
+        .record_alerts(
+            a,
+            run,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::High), secret],
+            false,
+        )
+        .await
+        .unwrap();
+    store
+        .record_alerts(
+            b,
+            run,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::Medium)],
+            false,
+        )
+        .await
+        .unwrap();
+
+    check!(
+        store
+            .list_alerts(a, &AlertFilter::default())
+            .await
+            .unwrap()
+            .len()
+            == 2
+    );
+    let only_secrets = store
+        .list_alerts(
+            a,
+            &AlertFilter {
+                source: Some(AlertSource::SecretScanning),
+                state: None,
+            },
+        )
+        .await
+        .unwrap();
+    check!(only_secrets.len() == 1);
+    check!(only_secrets[0].record.severity == Severity::Critical);
+
+    let repos = store.list_repos(&RepoFilter::default()).await.unwrap();
+    check!(repos[0].open_alerts.total() == 2);
+    check!(repos[1].open_alerts.medium == 1);
+}
+
+pub async fn source_status_is_upserted(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let id = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run)
+        .await
+        .unwrap();
+    store
+        .set_source_status(
+            id,
+            AlertSource::CodeScanning,
+            run,
+            t0(),
+            SourceStatus::Unavailable,
+            Some("no analysis"),
+        )
+        .await
+        .unwrap();
+    store
+        .set_source_status(
+            id,
+            AlertSource::Dependabot,
+            run,
+            t0(),
+            SourceStatus::Ok,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_source_status(
+            id,
+            AlertSource::CodeScanning,
+            run,
+            t0() + Duration::hours(1),
+            SourceStatus::Ok,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let statuses = store.source_statuses(id).await.unwrap();
+    check!(statuses.len() == 2);
+    let code = statuses
+        .iter()
+        .find(|s| s.source == AlertSource::CodeScanning)
+        .unwrap();
+    check!(code.status == SourceStatus::Ok);
+    check!(code.message == None);
+    check!(code.checked_at == t0() + Duration::hours(1));
+}
+
+pub async fn baseline_events_are_filtered_on_request(store: Arc<dyn Store>) {
+    let run1 = store.begin_run(t0()).await.unwrap();
+    let repo = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run1)
+        .await
+        .unwrap();
+    store
+        .record_alerts(
+            repo,
+            run1,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::High)],
+            true,
+        )
+        .await
+        .unwrap();
+    let run2 = store.begin_run(t0() + Duration::hours(1)).await.unwrap();
+    store
+        .record_alerts(
+            repo,
+            run2,
+            t0() + Duration::hours(1),
+            &[
+                alert(1, AlertState::Open, Severity::High),
+                alert(2, AlertState::Open, Severity::Low),
+            ],
+            false,
+        )
+        .await
+        .unwrap();
+
+    let news = store
+        .alert_events(&EventFilter {
+            repo: None,
+            since: None,
+            limit: 10,
+            include_baseline: false,
+        })
+        .await
+        .unwrap();
+    check!(news.len() == 1);
+    check!(news[0].number == 2);
+    check!(!news[0].baseline);
+
+    let all = store
+        .alert_events(&EventFilter {
+            repo: Some(repo),
+            since: None,
+            limit: 10,
+            include_baseline: true,
+        })
+        .await
+        .unwrap();
+    check!(all.len() == 2);
+    check!(let Some(first) = all.last() && first.baseline && first.number == 1);
+}
+
+pub async fn first_collected_run_survives_failures(store: Arc<dyn Store>) {
+    let run1 = store.begin_run(t0()).await.unwrap();
+    let id = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run1)
+        .await
+        .unwrap();
+    let source = AlertSource::Dependabot;
+    store
+        .set_source_status(
+            id,
+            source,
+            run1,
+            t0(),
+            SourceStatus::Unavailable,
+            Some("off"),
+        )
+        .await
+        .unwrap();
+    let first = |statuses: Vec<store::RepoSource>| statuses[0].first_collected_run;
+    check!(first(store.source_statuses(id).await.unwrap()) == None);
+
+    let run2 = store.begin_run(t0() + Duration::hours(1)).await.unwrap();
+    store
+        .set_source_status(id, source, run2, t0(), SourceStatus::Ok, None)
+        .await
+        .unwrap();
+    let run3 = store.begin_run(t0() + Duration::hours(2)).await.unwrap();
+    store
+        .set_source_status(id, source, run3, t0(), SourceStatus::Error, Some("503"))
+        .await
+        .unwrap();
+    let run4 = store.begin_run(t0() + Duration::hours(3)).await.unwrap();
+    store
+        .set_source_status(id, source, run4, t0(), SourceStatus::Ok, None)
+        .await
+        .unwrap();
+
+    check!(first(store.source_statuses(id).await.unwrap()) == Some(run2));
 }
 
 macro_rules! contract_tests {
@@ -250,6 +594,31 @@ macro_rules! contract_tests {
             #[tokio::test]
             async fn list_filters() {
                 super::list_filters(open().await).await
+            }
+
+            #[tokio::test]
+            async fn alert_lifecycle_is_audited() {
+                super::alert_lifecycle_is_audited(open().await).await
+            }
+
+            #[tokio::test]
+            async fn alerts_are_scoped_by_repo_and_source() {
+                super::alerts_are_scoped_by_repo_and_source(open().await).await
+            }
+
+            #[tokio::test]
+            async fn source_status_is_upserted() {
+                super::source_status_is_upserted(open().await).await
+            }
+
+            #[tokio::test]
+            async fn baseline_events_are_filtered_on_request() {
+                super::baseline_events_are_filtered_on_request(open().await).await
+            }
+
+            #[tokio::test]
+            async fn first_collected_run_survives_failures() {
+                super::first_collected_run_survives_failures(open().await).await
             }
         }
     };

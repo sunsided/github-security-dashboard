@@ -1,5 +1,6 @@
 //! JSON API under `/api`.
 
+use crate::config::Scoring;
 use crate::scheduler::Scheduler;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -11,7 +12,10 @@ use gh::{GitHub, RateLimit};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use store::{RepoFilter, RepoKind, RepoOverview, Run, Snapshot, Store};
+use store::{
+    Alert, AlertEvent, AlertFilter, EventFilter, RepoFilter, RepoKind, RepoOverview, RepoSource,
+    Run, SeverityCounts, Snapshot, Store,
+};
 
 /// Repositories without a commit for this long count as stale.
 const STALE_AFTER_DAYS: i64 = 180;
@@ -21,6 +25,7 @@ pub struct AppState {
     pub store: Arc<dyn Store>,
     pub github: Arc<GitHub>,
     pub scheduler: Arc<Scheduler>,
+    pub scoring: Scoring,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -29,6 +34,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/repos", get(list_repos))
         .route("/api/repos/{owner}/{name}", get(get_repo))
         .route("/api/runs", get(list_runs))
+        .route("/api/events", get(list_events))
         .route("/api/refresh", post(refresh))
         .with_state(state)
 }
@@ -58,10 +64,12 @@ struct RepoView {
     /// Whole days since the last commit on the default branch.
     days_since_commit: Option<i64>,
     stale: bool,
+    /// Weighted sum of open alerts; see [`Scoring`].
+    risk_score: i64,
 }
 
 impl RepoView {
-    fn new(repo: RepoOverview, now: DateTime<Utc>) -> Self {
+    fn new(repo: RepoOverview, now: DateTime<Utc>, scoring: &Scoring) -> Self {
         let days_since_commit = repo
             .latest
             .as_ref()
@@ -70,6 +78,7 @@ impl RepoView {
         Self {
             stale: days_since_commit.is_some_and(|d| d >= STALE_AFTER_DAYS),
             days_since_commit,
+            risk_score: scoring.score(&repo.open_alerts),
             repo,
         }
     }
@@ -95,7 +104,10 @@ async fn list_repos(
     let now = Utc::now();
     let repos = state.store.list_repos(&filter).await?;
     Ok(Json(
-        repos.into_iter().map(|r| RepoView::new(r, now)).collect(),
+        repos
+            .into_iter()
+            .map(|r| RepoView::new(r, now, &state.scoring))
+            .collect(),
     ))
 }
 
@@ -104,6 +116,10 @@ struct RepoDetail {
     #[serde(flatten)]
     repo: RepoView,
     history: Vec<Snapshot>,
+    /// Open alerts first, then closed ones, most severe first.
+    alerts: Vec<Alert>,
+    sources: Vec<RepoSource>,
+    events: Vec<AlertEvent>,
 }
 
 async fn get_repo(
@@ -115,9 +131,28 @@ async fn get_repo(
         return Ok((StatusCode::NOT_FOUND, body).into_response());
     };
     let history = state.store.snapshot_history(repo.id, 90).await?;
+    let alerts = state
+        .store
+        .list_alerts(repo.id, &AlertFilter::default())
+        .await?;
+    let sources = state.store.source_statuses(repo.id).await?;
+    let events = state
+        .store
+        .alert_events(&EventFilter {
+            repo: Some(repo.id),
+            since: None,
+            limit: 100,
+            // A repository's history starts with what was there when it was
+            // first collected.
+            include_baseline: true,
+        })
+        .await?;
     let detail = RepoDetail {
-        repo: RepoView::new(repo, Utc::now()),
+        repo: RepoView::new(repo, Utc::now(), &state.scoring),
         history,
+        alerts,
+        sources,
+        events,
     };
     Ok(Json(detail).into_response())
 }
@@ -139,6 +174,35 @@ async fn list_runs(
     Ok(Json(state.store.list_runs(query.limit.min(200)).await?))
 }
 
+#[derive(Deserialize)]
+struct EventsQuery {
+    since: Option<DateTime<Utc>>,
+    #[serde(default = "default_events_limit")]
+    limit: u32,
+    /// Include events describing alerts that existed when a source was
+    /// first collected.
+    #[serde(default)]
+    include_baseline: bool,
+}
+
+fn default_events_limit() -> u32 {
+    100
+}
+
+/// Alert changes across all repositories, most recent first.
+async fn list_events(
+    State(state): State<AppState>,
+    Query(query): Query<EventsQuery>,
+) -> ApiResult<Vec<AlertEvent>> {
+    let filter = EventFilter {
+        repo: None,
+        since: query.since,
+        limit: query.limit.min(1000),
+        include_baseline: query.include_baseline,
+    };
+    Ok(Json(state.store.alert_events(&filter).await?))
+}
+
 #[derive(Serialize)]
 struct Summary {
     repos: usize,
@@ -146,6 +210,8 @@ struct Summary {
     open_issues: i64,
     open_prs: i64,
     stale_after_days: i64,
+    open_alerts: SeverityCounts,
+    repos_with_alerts: usize,
     collecting: bool,
     last_run: Option<Run>,
     rate_limits: HashMap<String, RateLimit>,
@@ -158,8 +224,16 @@ async fn summary(State(state): State<AppState>) -> ApiResult<Summary> {
         .list_repos(&RepoFilter::default())
         .await?
         .into_iter()
-        .map(|r| RepoView::new(r, now))
+        .map(|r| RepoView::new(r, now, &state.scoring))
         .collect();
+    let mut open_alerts = SeverityCounts::default();
+    for r in &repos {
+        let c = r.repo.open_alerts;
+        open_alerts.critical += c.critical;
+        open_alerts.high += c.high;
+        open_alerts.medium += c.medium;
+        open_alerts.low += c.low;
+    }
     let latest = || repos.iter().filter_map(|r| r.repo.latest.as_ref());
 
     Ok(Json(Summary {
@@ -168,6 +242,11 @@ async fn summary(State(state): State<AppState>) -> ApiResult<Summary> {
         open_issues: latest().map(|s| s.stats.open_issues).sum(),
         open_prs: latest().map(|s| s.stats.open_prs).sum(),
         stale_after_days: STALE_AFTER_DAYS,
+        open_alerts,
+        repos_with_alerts: repos
+            .iter()
+            .filter(|r| r.repo.open_alerts.total() > 0)
+            .count(),
         collecting: state.scheduler.is_running(),
         last_run: state.store.list_runs(1).await?.into_iter().next(),
         rate_limits: state.github.rate_limits(),

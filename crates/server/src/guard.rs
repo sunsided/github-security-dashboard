@@ -64,6 +64,7 @@ pub async fn check(State(allowed): State<AllowedHosts>, request: Request, next: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
     use axum::http::HeaderValue;
 
     fn host(value: &str) -> HeaderMap {
@@ -81,7 +82,7 @@ mod tests {
             "[::1]:8080",
             "dashboard.internal:443",
         ] {
-            assert!(allowed.allows(&host(ok)), "{ok}");
+            check!(allowed.allows(&host(ok)), "{ok}");
         }
         for bad in [
             "evil.example",
@@ -89,8 +90,8 @@ mod tests {
             "localhost.evil.example",
             "[::2]",
         ] {
-            assert!(!allowed.allows(&host(bad)), "{bad}");
+            check!(!allowed.allows(&host(bad)), "{bad}");
         }
-        assert!(!allowed.allows(&HeaderMap::new()), "missing Host");
+        check!(!allowed.allows(&HeaderMap::new()), "missing Host");
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activity, formatAge, formatCount, formatDuration } from './format';
+import { activity, describeEvent, formatAge, formatCount, formatDuration } from './format';
 
 describe('formatCount', () => {
 	it('keeps small numbers exact and compacts large ones', () => {
@@ -35,5 +35,16 @@ describe('formatDuration', () => {
 		expect(formatDuration('2026-10-17T12:00:00Z', '2026-10-17T12:00:42Z')).toBe('42 s');
 		expect(formatDuration('2026-10-17T12:00:00Z', '2026-10-17T12:05:00Z')).toBe('5 min');
 		expect(formatDuration('2026-10-17T12:00:00Z', null)).toBe('—');
+	});
+});
+
+describe('describeEvent', () => {
+	it('names the transition', () => {
+		expect(describeEvent('opened', null, 'high')).toBe('opened as high');
+		expect(describeEvent('opened', null, 'high', true)).toBe('first seen as high');
+		expect(describeEvent('severity_changed', 'high', 'critical')).toBe('severity high → critical');
+		expect(describeEvent('reopened', 'dismissed', 'open')).toBe('reopened (was dismissed)');
+		expect(describeEvent('fixed', 'open', 'fixed')).toBe('fixed');
+		expect(describeEvent('gone', 'open', 'gone')).toBe('no longer on GitHub');
 	});
 });
