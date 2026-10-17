@@ -3,7 +3,7 @@
 export type RepoKind = 'org' | 'user' | 'external';
 export type RunStatus = 'running' | 'succeeded' | 'partial' | 'failed';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
-export type AlertSource = 'dependabot' | 'code_scanning' | 'secret_scanning';
+export type AlertSource = 'dependabot' | 'code_scanning' | 'secret_scanning' | 'osv';
 export type AlertState = 'open' | 'fixed' | 'dismissed' | 'gone';
 export type EventKind = 'opened' | 'reopened' | 'severity_changed' | 'fixed' | 'dismissed' | 'gone';
 export type SourceStatus = 'ok' | 'unavailable' | 'skipped' | 'error';
@@ -14,8 +14,12 @@ export const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
 export const SOURCE_LABELS: Record<AlertSource, string> = {
 	dependabot: 'Dependabot',
 	code_scanning: 'Code scanning',
-	secret_scanning: 'Secret scanning'
+	secret_scanning: 'Secret scanning',
+	osv: 'OSV estimate'
 };
+
+/** Alert numbers are GitHub's own, except for OSV estimates (internal keys). */
+export const hasAlertNumber = (source: AlertSource) => source !== 'osv';
 
 export type SeverityCounts = Record<Severity, number>;
 

@@ -402,6 +402,7 @@ dependencies = [
  "assert2",
  "chrono",
  "gh",
+ "reqwest",
  "serde",
  "serde_json",
  "store",
