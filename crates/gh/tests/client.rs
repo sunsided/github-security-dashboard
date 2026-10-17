@@ -423,3 +423,57 @@ async fn errors_outside_the_repository_list_still_fail() {
         .unwrap_err();
     check!(let Error::GraphQl(messages) = &err && messages[0].contains("not accessible"));
 }
+
+#[tokio::test]
+async fn entries_with_field_errors_are_left_out_not_trusted() {
+    let server = MockServer::start().await;
+    // GitHub returned entry 0, but nulled its nullable default branch: read
+    // naively, that would look like an empty repository.
+    let mut damaged = repo_node("damaged", Some(10));
+    damaged["defaultBranchRef"] = Value::Null;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "repositoryOwner": { "repositories": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [damaged, repo_node("fine", Some(3))]
+            }}},
+            "errors": [{
+                "type": "FORBIDDEN",
+                "message": "Resource not accessible by integration",
+                "path": ["repositoryOwner", "repositories", "nodes", 0, "defaultBranchRef"]
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let listing = client(&server)
+        .owner_repositories("acme", 25)
+        .await
+        .unwrap();
+    check!(listing.hidden == 1);
+    check!(listing.repositories.len() == 1);
+    check!(listing.repositories[0].name == "fine");
+}
+
+#[tokio::test]
+async fn not_found_outside_the_owner_still_fails() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "repositoryOwner": { "repositories": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": []
+            }}},
+            "errors": [{ "type": "NOT_FOUND", "message": "Could not resolve to a node",
+                         "path": ["somewhereElse"] }]
+        })))
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .owner_repositories("acme", 25)
+        .await
+        .unwrap_err();
+    check!(let Error::GraphQl(_) = err);
+}

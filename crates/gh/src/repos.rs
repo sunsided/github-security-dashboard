@@ -213,11 +213,31 @@ fn is_not_found(e: &crate::GraphQlError) -> bool {
     e.kind.as_deref() == Some("NOT_FOUND")
 }
 
-/// Errors about a single entry of the repository list, which then is
-/// `null`; the rest of the page is still valid.
-fn is_about_one_repository(e: &crate::GraphQlError) -> bool {
-    let path: Vec<_> = e.path.iter().take(3).filter_map(|p| p.as_str()).collect();
-    is_not_found(e) || path == ["repositoryOwner", "repositories", "nodes"]
+/// The entry of the repository list an error is about, if any:
+/// `["repositoryOwner", "repositories", "nodes", 3, "issues"]` is about
+/// entry 3. GitHub nulls a field it may not resolve, and the null bubbles
+/// up to the entry when the field is non-nullable.
+fn repository_entry(e: &crate::GraphQlError) -> Option<usize> {
+    match e.path.as_slice() {
+        [owner, repos, nodes, index, ..]
+            if *owner == "repositoryOwner" && *repos == "repositories" && *nodes == "nodes" =>
+        {
+            index.as_u64().and_then(|i| usize::try_from(i).ok())
+        }
+        _ => None,
+    }
+}
+
+/// Errors the repository listing can live with: the owner itself not
+/// existing (reported as `None` data), or a problem with single entries,
+/// which are then left out. Anything else fails the request.
+fn tolerable_in_listing(e: &crate::GraphQlError) -> bool {
+    (is_not_found(e) && e.path.len() == 1 && e.path[0] == "repositoryOwner")
+        || repository_entry(e).is_some()
+}
+
+fn is_repository_not_found(e: &crate::GraphQlError) -> bool {
+    is_not_found(e) && e.path.len() == 1 && e.path[0] == "repository"
 }
 
 impl GitHub {
@@ -239,21 +259,29 @@ impl GitHub {
                     login,
                     &query,
                     json!({ "login": login, "first": page_size, "after": after }),
-                    is_about_one_repository,
+                    tolerable_in_listing,
                 )
                 .await?;
             let owner = data
                 .and_then(|d| d.repository_owner)
                 .ok_or_else(|| Error::NotFound(format!("owner {login}")))?;
             let connection = owner.repositories;
-            for node in connection.nodes {
+            // An entry with any error is left out even when GitHub returned
+            // it, since a field it could not resolve would read as a real
+            // value (a missing default branch as an empty repository).
+            let affected: Vec<usize> = tolerated.iter().filter_map(repository_entry).collect();
+            for (index, node) in connection.nodes.into_iter().enumerate() {
                 match node {
-                    Some(node) => listing.repositories.push(Repository::from(node)),
-                    None => listing.hidden += 1,
+                    Some(node) if !affected.contains(&index) => {
+                        listing.repositories.push(Repository::from(node));
+                    }
+                    _ => listing.hidden += 1,
                 }
             }
             for error in tolerated {
-                if !listing.hidden_reasons.contains(&error.message) {
+                if repository_entry(&error).is_some()
+                    && !listing.hidden_reasons.contains(&error.message)
+                {
                     listing.hidden_reasons.push(error.message);
                 }
             }
@@ -275,7 +303,7 @@ impl GitHub {
                 owner,
                 &query,
                 json!({ "owner": owner, "name": name }),
-                is_not_found,
+                is_repository_not_found,
             )
             .await?;
         data.and_then(|d| d.repository)
