@@ -50,11 +50,14 @@ pub(crate) struct Tracked {
     pub fork: bool,
 }
 
-fn kind_of(source: AlertSource) -> AlertKind {
+/// The GitHub endpoint family of a source; `None` for sources GitHub
+/// doesn't report (OSV estimates, see `estimate.rs`).
+fn kind_of(source: AlertSource) -> Option<AlertKind> {
     match source {
-        AlertSource::Dependabot => AlertKind::Dependabot,
-        AlertSource::CodeScanning => AlertKind::CodeScanning,
-        AlertSource::SecretScanning => AlertKind::SecretScanning,
+        AlertSource::Dependabot => Some(AlertKind::Dependabot),
+        AlertSource::CodeScanning => Some(AlertKind::CodeScanning),
+        AlertSource::SecretScanning => Some(AlertKind::SecretScanning),
+        AlertSource::Osv => None,
     }
 }
 
@@ -80,7 +83,9 @@ impl Collector {
         }
 
         for &source in &self.config.alerts.sources {
-            let kind = kind_of(source);
+            let Some(kind) = kind_of(source) else {
+                continue;
+            };
             let mut fallback: Vec<&Tracked> = Vec::new();
 
             for org_repos in orgs.values() {
@@ -100,7 +105,7 @@ impl Collector {
                             let open = by_repo
                                 .remove(&repo.name.to_lowercase())
                                 .unwrap_or_default();
-                            self.apply(run, repo, source, open, errors).await?;
+                            self.apply(run, repo, source, kind, open, errors).await?;
                         }
                     }
                     Err(e) if e.is_inaccessible() => {
@@ -133,7 +138,7 @@ impl Collector {
 
             for (repo, result) in self.fetch_per_repo(&queried, kind).await {
                 match result {
-                    Ok(open) => self.apply(run, repo, source, open, errors).await?,
+                    Ok(open) => self.apply(run, repo, source, kind, open, errors).await?,
                     Err(e) if e.is_inaccessible() => {
                         let message = e.reason();
                         self.status(run, repo, source, SourceStatus::Unavailable, Some(&message))
@@ -198,6 +203,7 @@ impl Collector {
         run: RunId,
         repo: &Tracked,
         source: AlertSource,
+        kind: AlertKind,
         open: Vec<SecurityAlert>,
         errors: &mut Vec<String>,
     ) -> Result<(), Error> {
@@ -221,12 +227,7 @@ impl Collector {
         {
             match self
                 .github
-                .repo_alert(
-                    &repo.owner,
-                    &repo.name,
-                    kind_of(source),
-                    stale.record.number,
-                )
+                .repo_alert(&repo.owner, &repo.name, kind, stale.record.number)
                 .await
             {
                 Ok(current) => records.push(self.to_record(source, &current)),

@@ -1,8 +1,11 @@
 //! One collection pass: GitHub in, store snapshots and alerts out.
 
 mod alerts;
+mod estimate;
+mod osv;
 
 pub use alerts::AlertsConfig;
+pub use estimate::{OsvConfig, OsvScope};
 
 use chrono::Utc;
 use gh::{GitHub, OwnerKind, Repository};
@@ -62,6 +65,8 @@ pub struct CollectorConfig {
     /// Parallel REST requests.
     pub concurrency: usize,
     pub alerts: AlertsConfig,
+    /// Estimated alerts for repositories without readable Dependabot alerts.
+    pub osv: OsvConfig,
 }
 
 impl Default for CollectorConfig {
@@ -72,6 +77,7 @@ impl Default for CollectorConfig {
             page_size: 25,
             concurrency: 8,
             alerts: AlertsConfig::default(),
+            osv: OsvConfig::default(),
         }
     }
 }
@@ -88,11 +94,13 @@ pub struct Collector {
     github: Arc<GitHub>,
     store: Arc<dyn Store>,
     config: CollectorConfig,
+    osv: Option<osv::OsvClient>,
 }
 
 impl Collector {
     pub fn new(github: Arc<GitHub>, store: Arc<dyn Store>, config: CollectorConfig) -> Self {
         Self {
+            osv: estimate::client(&config.osv),
             github,
             store,
             config,
@@ -222,6 +230,7 @@ impl Collector {
         }
 
         self.collect_alerts(run, &tracked, errors).await?;
+        self.estimate_with_osv(run, &tracked, errors).await?;
         Ok(tracked.len())
     }
 

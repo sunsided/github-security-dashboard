@@ -11,10 +11,14 @@ crate::string_enum! {
         Dependabot = "dependabot",
         CodeScanning = "code_scanning",
         SecretScanning = "secret_scanning",
+        /// Estimated from the dependency graph and the OSV database, for
+        /// repositories whose Dependabot alerts can't be read.
+        Osv = "osv",
     }
 }
 
 impl AlertSource {
+    /// The sources GitHub itself reports alerts for.
     pub const ALL: [Self; 3] = [Self::Dependabot, Self::CodeScanning, Self::SecretScanning];
 }
 
