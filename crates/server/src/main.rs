@@ -39,9 +39,8 @@ async fn main() -> anyhow::Result<()> {
     let tokens = config
         .auth
         .provider(&client_config, |name| std::env::var(name).ok())?;
-    if config.auth.app.is_some() {
-        tracing::info!("authenticating as a GitHub App");
-    }
+    let auth = tokens.label();
+    tracing::info!("authenticating with a {auth}");
     let github = Arc::new(GitHub::new(client_config, tokens)?);
     let collector = Collector::new(Arc::clone(&github), Arc::clone(&store), config.collector);
 
@@ -64,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
             github,
             scheduler,
             scoring: config.scoring,
+            auth,
         },
         allowed_hosts,
     );

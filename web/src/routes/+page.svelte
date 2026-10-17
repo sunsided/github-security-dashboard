@@ -131,6 +131,7 @@
 			{:else}
 				No collector run yet.
 			{/if}
+			· via {data.summary.auth}
 		</p>
 	</div>
 	<div class="actions">

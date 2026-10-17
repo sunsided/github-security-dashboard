@@ -96,6 +96,7 @@ async fn seeded_state() -> AppState {
         github,
         scheduler,
         scoring: Scoring::default(),
+        auth: "personal access token",
     }
 }
 
@@ -175,6 +176,7 @@ async fn summary_aggregates_latest_snapshots() {
     check!(body["open_alerts"]["low"] == 1);
     check!(body["repos_with_alerts"] == 1);
     check!(body["collecting"] == false);
+    check!(body["auth"] == "personal access token");
     check!(body["last_run"]["status"] == "succeeded");
     check!(body["last_run"]["rate_limit_remaining"] == 4999);
 }
