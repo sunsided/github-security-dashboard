@@ -5,6 +5,7 @@ use crate::{Error, Result, link};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +15,9 @@ use tokio::sync::Mutex;
 const RENEW_BEFORE: Duration = Duration::minutes(5);
 /// How long the installation list is trusted before it is fetched again.
 const INSTALLATIONS_TTL: Duration = Duration::minutes(10);
+/// Attempts for App API requests failing with a server error or a
+/// secondary rate limit.
+const MAX_ATTEMPTS: u32 = 4;
 /// Minimum age of the installation list before an unknown owner refreshes it.
 const UNKNOWN_OWNER_RETRY: Duration = Duration::minutes(1);
 
@@ -70,6 +74,8 @@ pub struct AppProvider {
     app_id: String,
     key: EncodingKey,
     fallback: Option<Arc<dyn TokenProvider>>,
+    /// Initial wait between retries; doubles per attempt.
+    backoff: std::time::Duration,
     cache: Mutex<Cache>,
 }
 
@@ -95,8 +101,15 @@ impl AppProvider {
             app_id: app_id.into(),
             key,
             fallback: None,
+            backoff: std::time::Duration::from_secs(1),
             cache: Mutex::default(),
         })
+    }
+
+    /// Initial wait between retries of failed App API requests.
+    pub fn with_retry_backoff(mut self, backoff: std::time::Duration) -> Self {
+        self.backoff = backoff;
+        self
     }
 
     /// Tokens for owners without an installation come from `fallback`.
@@ -118,13 +131,44 @@ impl AppProvider {
             .map_err(|e| Error::Auth(format!("signing App JWT: {e}")))
     }
 
-    async fn app_request(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
-        let response = request
-            .bearer_auth(self.jwt()?)
-            .header("accept", "application/vnd.github+json")
-            .header("x-github-api-version", "2022-11-28")
-            .send()
-            .await?;
+    /// Sends an App-authenticated request, retrying server errors and
+    /// secondary rate limits like [`crate::GitHub`] does for API calls: a
+    /// single 503 while renewing a token would otherwise fail a whole run.
+    async fn app_request(
+        &self,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        let mut attempt = 0;
+        let response = loop {
+            let response = build()
+                .bearer_auth(self.jwt()?)
+                .header("accept", "application/vnd.github+json")
+                .header("x-github-api-version", "2022-11-28")
+                .send()
+                .await?;
+            let status = response.status();
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok())
+                .map(std::time::Duration::from_secs);
+            let wait = match status {
+                s if s.is_server_error() => {
+                    Some(retry_after.unwrap_or(self.backoff * 2u32.pow(attempt)))
+                }
+                StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => retry_after,
+                _ => None,
+            };
+            attempt += 1;
+            match wait {
+                Some(wait) if attempt < MAX_ATTEMPTS => {
+                    tracing::warn!(%status, ?wait, attempt, "retrying GitHub App request");
+                    tokio::time::sleep(wait).await;
+                }
+                _ => break response,
+            }
+        };
         let status = response.status();
         if status.is_success() {
             return Ok(response);
@@ -146,7 +190,7 @@ impl AppProvider {
         let mut map = HashMap::new();
         let mut next = Some(format!("{}/app/installations?per_page=100", self.api_url));
         while let Some(url) = next {
-            let response = self.app_request(self.http.get(&url)).await?;
+            let response = self.app_request(|| self.http.get(&url)).await?;
             next = response
                 .headers()
                 .get(reqwest::header::LINK)
@@ -183,7 +227,7 @@ impl AppProvider {
             return Ok(token.clone());
         }
         let url = format!("{}/app/installations/{id}/access_tokens", self.api_url);
-        let token: AccessToken = decode(self.app_request(self.http.post(&url)).await?).await?;
+        let token: AccessToken = decode(self.app_request(|| self.http.post(&url)).await?).await?;
         let secret = Secret::new(token.token);
         cache.tokens.insert(id, (secret.clone(), token.expires_at));
         Ok(secret)
@@ -197,6 +241,11 @@ impl TokenProvider for AppProvider {
     }
 
     async fn token(&self, owner: &str) -> Result<Secret> {
+        // The lock is held across the network calls on purpose. Cache hits
+        // (nearly every call) hold it for microseconds; a refresh happens
+        // about once an hour per installation, and concurrent callers
+        // waiting for it then reuse its result instead of all fetching a
+        // token for the same installation at once.
         let mut cache = self.cache.lock().await;
         let owner = owner.to_lowercase();
 

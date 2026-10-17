@@ -166,6 +166,7 @@ async fn rejected_jwt_reports_github_message() {
         .respond_with(ResponseTemplate::new(401).set_body_json(
             json!({ "message": "'Expiration time' claim ('exp') is too far in the future" }),
         ))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -220,4 +221,25 @@ async fn undecodable_responses_say_why() {
 
     let err = provider(&server).token("acme").await.unwrap_err();
     check!(let Error::Auth(message) = &err && message.contains("/app/installations") && message.contains("expected a sequence"));
+}
+
+#[tokio::test]
+async fn transient_app_api_failures_are_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/app/installations"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_installations(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/app/installations/7/access_tokens"))
+        .respond_with(access_token("inst-7", Duration::hours(1)))
+        .mount(&server)
+        .await;
+
+    let app = provider(&server).with_retry_backoff(std::time::Duration::ZERO);
+    check!(app.token("acme").await.unwrap().expose() == "inst-7");
 }
