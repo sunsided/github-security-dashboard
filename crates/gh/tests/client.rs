@@ -145,8 +145,7 @@ async fn other_graphql_errors_fail() {
         .repository("acme", "alpha")
         .await
         .unwrap_err();
-    assert2::assert!(let Error::GraphQl(messages) = &err);
-    check!(messages == &["too many nodes"]);
+    check!(let Error::GraphQl(messages) = &err && messages == &["too many nodes"]);
 }
 
 #[tokio::test]
