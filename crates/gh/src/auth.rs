@@ -55,9 +55,10 @@ impl TokenProvider for PatProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     #[test]
     fn secret_debug_is_redacted() {
-        assert_eq!(format!("{:?}", Secret::new("ghp_abc")), "Secret(***)");
+        check!(format!("{:?}", Secret::new("ghp_abc")) == "Secret(***)");
     }
 }

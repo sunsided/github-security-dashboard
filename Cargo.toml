@@ -17,6 +17,7 @@ store = { path = "crates/store", default-features = false }
 collector = { path = "crates/collector" }
 
 anyhow = "1.0.104"
+assert2 = "0.4.1"
 async-trait = "0.1.92"
 axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }

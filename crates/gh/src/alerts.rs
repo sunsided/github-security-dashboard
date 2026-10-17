@@ -377,6 +377,7 @@ impl GitHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
     use serde_json::json;
 
     #[test]
@@ -394,11 +395,11 @@ mod tests {
             "repo",
         )
         .unwrap();
-        assert_eq!((a.owner.as_str(), a.repo.as_str()), ("me", "repo"));
-        assert_eq!(a.status, AlertStatus::Dismissed);
-        assert_eq!(a.severity, Some(AlertSeverity::Medium));
-        assert_eq!(a.location.as_deref(), Some("npm/vite (web/yarn.lock)"));
-        assert!(a.closed_at.is_some());
+        check!((a.owner.as_str(), a.repo.as_str()) == ("me", "repo"));
+        check!(a.status == AlertStatus::Dismissed);
+        check!(a.severity == Some(AlertSeverity::Medium));
+        check!(a.location.as_deref() == Some("npm/vite (web/yarn.lock)"));
+        check!(a.closed_at.is_some());
     }
 
     #[test]
@@ -421,13 +422,13 @@ mod tests {
         let security = alert(
             json!({ "id": "js/xss", "severity": "error", "security_severity_level": "high", "description": "XSS" }),
         );
-        assert_eq!(security.severity, Some(AlertSeverity::High));
-        assert_eq!(security.repo, "api", "org endpoints name the repository");
-        assert_eq!(security.location.as_deref(), Some("js/xss in src/main.rs"));
+        check!(security.severity == Some(AlertSeverity::High));
+        check!(security.repo == "api", "org endpoints name the repository");
+        check!(security.location.as_deref() == Some("js/xss in src/main.rs"));
 
         let quality =
             alert(json!({ "id": "x", "severity": "warning", "security_severity_level": null }));
-        assert_eq!(quality.severity, Some(AlertSeverity::Low));
+        check!(quality.severity == Some(AlertSeverity::Low));
     }
 
     #[test]
@@ -448,17 +449,11 @@ mod tests {
             .unwrap()
         };
         let open = alert("open", None);
-        assert_eq!(open.status, AlertStatus::Open);
-        assert_eq!(open.severity, None);
-        assert_eq!(open.title, "GitHub Personal Access Token");
-        assert!(!format!("{open:?}").contains("ghp_must_never_be_kept"));
-        assert_eq!(
-            alert("resolved", Some("revoked")).status,
-            AlertStatus::Fixed
-        );
-        assert_eq!(
-            alert("resolved", Some("false_positive")).status,
-            AlertStatus::Dismissed
-        );
+        check!(open.status == AlertStatus::Open);
+        check!(open.severity == None);
+        check!(open.title == "GitHub Personal Access Token");
+        check!(!format!("{open:?}").contains("ghp_must_never_be_kept"));
+        check!(alert("resolved", Some("revoked")).status == AlertStatus::Fixed);
+        check!(alert("resolved", Some("false_positive")).status == AlertStatus::Dismissed);
     }
 }

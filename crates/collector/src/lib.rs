@@ -292,14 +292,15 @@ fn repo_stats(repo: &Repository, contributors: Option<i64>) -> RepoStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     #[test]
     fn parses_repo_refs() {
         let r = RepoRef::try_from("rust-lang/cargo".to_owned()).unwrap();
-        assert_eq!((r.owner.as_str(), r.name.as_str()), ("rust-lang", "cargo"));
-        assert_eq!(r.to_string(), "rust-lang/cargo");
+        check!((r.owner.as_str(), r.name.as_str()) == ("rust-lang", "cargo"));
+        check!(r.to_string() == "rust-lang/cargo");
         for bad in ["cargo", "/cargo", "rust-lang/", "a/b/c"] {
-            assert!(RepoRef::try_from(bad.to_owned()).is_err(), "{bad}");
+            check!(RepoRef::try_from(bad.to_owned()).is_err(), "{bad}");
         }
     }
 }

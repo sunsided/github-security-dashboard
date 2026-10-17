@@ -211,6 +211,7 @@ pub fn changes(previous: Option<&AlertRecord>, current: &AlertRecord) -> Vec<Cha
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
     use chrono::TimeZone;
 
     fn alert(state: AlertState, severity: Severity) -> AlertRecord {
@@ -237,60 +238,48 @@ mod tests {
 
     #[test]
     fn new_alerts() {
-        assert_eq!(
-            kinds(changes(None, &alert(Open, High))),
-            [EventKind::Opened]
-        );
-        assert!(changes(None, &alert(Fixed, High)).is_empty());
+        check!(kinds(changes(None, &alert(Open, High))) == [EventKind::Opened]);
+        check!(changes(None, &alert(Fixed, High)).is_empty());
     }
 
     #[test]
     fn unchanged_alert_has_no_events() {
-        assert!(changes(Some(&alert(Open, High)), &alert(Open, High)).is_empty());
-        assert!(changes(Some(&alert(Fixed, High)), &alert(Fixed, High)).is_empty());
+        check!(changes(Some(&alert(Open, High)), &alert(Open, High)).is_empty());
+        check!(changes(Some(&alert(Fixed, High)), &alert(Fixed, High)).is_empty());
     }
 
     #[test]
     fn closing_and_reopening() {
         let fixed = changes(Some(&alert(Open, High)), &alert(Fixed, High));
-        assert_eq!(fixed[0].kind, EventKind::Fixed);
-        assert_eq!(fixed[0].old.as_deref(), Some("open"));
-        assert_eq!(fixed[0].new.as_deref(), Some("fixed"));
-        assert_eq!(
-            kinds(changes(Some(&alert(Open, Low)), &alert(Dismissed, Low))),
-            [EventKind::Dismissed]
+        check!(fixed[0].kind == EventKind::Fixed);
+        check!(fixed[0].old.as_deref() == Some("open"));
+        check!(fixed[0].new.as_deref() == Some("fixed"));
+        check!(
+            kinds(changes(Some(&alert(Open, Low)), &alert(Dismissed, Low)))
+                == [EventKind::Dismissed]
         );
-        assert_eq!(
-            kinds(changes(Some(&alert(Open, Low)), &alert(Gone, Low))),
-            [EventKind::Gone]
+        check!(kinds(changes(Some(&alert(Open, Low)), &alert(Gone, Low))) == [EventKind::Gone]);
+        check!(
+            kinds(changes(Some(&alert(Dismissed, Low)), &alert(Open, Low)))
+                == [EventKind::Reopened]
         );
-        assert_eq!(
-            kinds(changes(Some(&alert(Dismissed, Low)), &alert(Open, Low))),
-            [EventKind::Reopened]
-        );
-        assert_eq!(
-            kinds(changes(Some(&alert(Fixed, Low)), &alert(Dismissed, Low))),
-            [EventKind::Dismissed]
+        check!(
+            kinds(changes(Some(&alert(Fixed, Low)), &alert(Dismissed, Low)))
+                == [EventKind::Dismissed]
         );
     }
 
     #[test]
     fn severity_changes_only_matter_while_open() {
         let c = changes(Some(&alert(Open, Medium)), &alert(Open, Critical));
-        assert_eq!(kinds(c.clone()), [EventKind::SeverityChanged]);
-        assert_eq!(
-            (c[0].old.as_deref(), c[0].new.as_deref()),
-            (Some("medium"), Some("critical"))
-        );
+        check!(kinds(c.clone()) == [EventKind::SeverityChanged]);
+        check!((c[0].old.as_deref(), c[0].new.as_deref()) == (Some("medium"), Some("critical")));
 
-        assert_eq!(
-            kinds(changes(Some(&alert(Dismissed, Low)), &alert(Open, High))),
-            [EventKind::Reopened, EventKind::SeverityChanged]
+        check!(
+            kinds(changes(Some(&alert(Dismissed, Low)), &alert(Open, High)))
+                == [EventKind::Reopened, EventKind::SeverityChanged]
         );
-        assert_eq!(
-            kinds(changes(Some(&alert(Open, Low)), &alert(Fixed, High))),
-            [EventKind::Fixed]
-        );
+        check!(kinds(changes(Some(&alert(Open, Low)), &alert(Fixed, High))) == [EventKind::Fixed]);
     }
 
     #[test]
@@ -298,6 +287,6 @@ mod tests {
         let mut c = SeverityCounts::default();
         c.add(Critical, 2);
         c.add(Low, 1);
-        assert_eq!((c.critical, c.low, c.total()), (2, 1, 3));
+        check!((c.critical, c.low, c.total()) == (2, 1, 3));
     }
 }

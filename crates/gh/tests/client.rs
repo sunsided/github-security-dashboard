@@ -1,3 +1,4 @@
+use assert2::check;
 use gh::{ClientConfig, Error, GitHub, OwnerKind, PatProvider, Secret};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -87,26 +88,25 @@ async fn lists_owner_repositories_across_pages() {
         .owner_repositories("acme", 25)
         .await
         .unwrap();
-    assert_eq!(repos.len(), 2);
+    check!(repos.len() == 2);
 
     let alpha = &repos[0];
-    assert_eq!(alpha.owner_kind, OwnerKind::Organization);
-    assert_eq!(alpha.commits, Some(120));
-    assert_eq!(alpha.default_branch.as_deref(), Some("main"));
-    assert_eq!(
+    check!(alpha.owner_kind == OwnerKind::Organization);
+    check!(alpha.commits == Some(120));
+    check!(alpha.default_branch.as_deref() == Some("main"));
+    check!(
         (
             alpha.open_issues,
             alpha.open_prs,
             alpha.tags,
             alpha.releases
-        ),
-        (5, 2, 7, 1)
+        ) == (5, 2, 7, 1)
     );
-    assert_eq!(alpha.language.as_deref(), Some("Rust"));
+    check!(alpha.language.as_deref() == Some("Rust"));
 
     let empty = &repos[1];
-    assert_eq!(empty.commits, None);
-    assert_eq!(empty.last_commit_at, None);
+    check!(empty.commits == None);
+    check!(empty.last_commit_at == None);
 }
 
 #[tokio::test]
@@ -125,8 +125,8 @@ async fn unknown_owner_is_not_found() {
         .owner_repositories("nobody", 25)
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::NotFound(_)), "{err:?}");
-    assert!(err.is_inaccessible());
+    check!(let Error::NotFound(_) = err, "{err:?}");
+    check!(err.is_inaccessible());
 }
 
 #[tokio::test]
@@ -145,10 +145,8 @@ async fn other_graphql_errors_fail() {
         .repository("acme", "alpha")
         .await
         .unwrap_err();
-    assert!(
-        matches!(&err, Error::GraphQl(m) if m == &["too many nodes"]),
-        "{err:?}"
-    );
+    assert2::assert!(let Error::GraphQl(messages) = &err);
+    check!(messages == &["too many nodes"]);
 }
 
 #[tokio::test]
@@ -175,9 +173,9 @@ async fn retries_secondary_rate_limit_and_server_errors() {
 
     let gh = client(&server);
     let repo = gh.repository("acme", "alpha").await.unwrap();
-    assert_eq!(repo.name, "alpha");
-    assert_eq!(gh.rate_limit_remaining(), Some(4990));
-    assert!(gh.rate_limits().contains_key("graphql"));
+    check!(repo.name == "alpha");
+    check!(gh.rate_limit_remaining() == Some(4990));
+    check!(gh.rate_limits().contains_key("graphql"));
 }
 
 #[tokio::test]
@@ -200,7 +198,7 @@ async fn gives_up_when_primary_reset_is_too_far_away() {
         .contributor_count("acme", "alpha")
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::RateLimited { .. }), "{err:?}");
+    check!(let Error::RateLimited { .. } = err, "{err:?}");
 }
 
 #[tokio::test]
@@ -219,8 +217,8 @@ async fn plain_forbidden_is_not_retried() {
         .contributor_count("acme", "alpha")
         .await
         .unwrap_err();
-    assert!(err.is_inaccessible());
-    assert!(err.to_string().contains("Resource not accessible"), "{err}");
+    check!(err.is_inaccessible());
+    check!(err.to_string().contains("Resource not accessible"), "{err}");
 }
 
 #[tokio::test]
@@ -260,16 +258,10 @@ async fn contributor_count_from_last_link() {
         .await;
 
     let gh = client(&server);
-    assert_eq!(
-        gh.contributor_count("acme", "alpha").await.unwrap(),
-        Some(42)
-    );
-    assert_eq!(gh.contributor_count("acme", "solo").await.unwrap(), Some(1));
-    assert_eq!(
-        gh.contributor_count("acme", "empty").await.unwrap(),
-        Some(0)
-    );
-    assert_eq!(gh.contributor_count("acme", "huge").await.unwrap(), None);
+    check!(gh.contributor_count("acme", "alpha").await.unwrap() == Some(42));
+    check!(gh.contributor_count("acme", "solo").await.unwrap() == Some(1));
+    check!(gh.contributor_count("acme", "empty").await.unwrap() == Some(0));
+    check!(gh.contributor_count("acme", "huge").await.unwrap() == None);
 }
 
 #[tokio::test]
@@ -296,14 +288,8 @@ async fn etag_hit_replays_cached_response() {
         .await;
 
     let gh = client(&server);
-    assert_eq!(
-        gh.contributor_count("acme", "alpha").await.unwrap(),
-        Some(9)
-    );
-    assert_eq!(
-        gh.contributor_count("acme", "alpha").await.unwrap(),
-        Some(9)
-    );
+    check!(gh.contributor_count("acme", "alpha").await.unwrap() == Some(9));
+    check!(gh.contributor_count("acme", "alpha").await.unwrap() == Some(9));
 }
 
 fn dependabot_json(number: i64, repo: &str) -> Value {
@@ -347,8 +333,8 @@ async fn org_alerts_follow_cursor_pages() {
         .await
         .unwrap();
     let ids: Vec<_> = alerts.iter().map(|a| (a.repo.as_str(), a.number)).collect();
-    assert_eq!(ids, [("api", 1), ("web", 2)]);
-    assert_eq!(alerts[0].severity, Some(gh::AlertSeverity::Critical));
+    check!(ids == [("api", 1), ("web", 2)]);
+    check!(alerts[0].severity == Some(gh::AlertSeverity::Critical));
 }
 
 #[tokio::test]
@@ -366,7 +352,7 @@ async fn secret_scanning_requests_hide_secrets() {
         .repo_alerts("me", "app", gh::AlertKind::SecretScanning)
         .await
         .unwrap();
-    assert!(alerts.is_empty());
+    check!(alerts.is_empty());
 }
 
 #[tokio::test]
@@ -384,6 +370,6 @@ async fn disabled_feature_is_inaccessible() {
         .repo_alerts("me", "app", gh::AlertKind::CodeScanning)
         .await
         .unwrap_err();
-    assert!(err.is_inaccessible());
-    assert!(err.to_string().contains("not enabled"));
+    check!(err.is_inaccessible());
+    check!(err.to_string().contains("not enabled"));
 }

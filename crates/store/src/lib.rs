@@ -85,11 +85,12 @@ fn scheme_of(url: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     #[test]
     fn error_shows_scheme_only() {
-        assert_eq!(scheme_of("postgres://user:secret@db:5432/x"), "postgres");
-        assert_eq!(scheme_of("mysql://db/x?password=secret"), "mysql");
-        assert_eq!(scheme_of("no-scheme-here"), "<none>");
+        check!(scheme_of("postgres://user:secret@db:5432/x") == "postgres");
+        check!(scheme_of("mysql://db/x?password=secret") == "mysql");
+        check!(scheme_of("no-scheme-here") == "<none>");
     }
 }

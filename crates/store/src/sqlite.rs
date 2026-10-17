@@ -523,6 +523,7 @@ impl Store for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     #[tokio::test]
     async fn audit_tables_reject_updates_and_deletes() {
@@ -567,7 +568,7 @@ mod tests {
             "DELETE FROM repo_snapshots",
         ] {
             let err = sqlx::query(sql).execute(&store.pool).await.unwrap_err();
-            assert!(err.to_string().contains("append-only"), "{sql}: {err}");
+            check!(err.to_string().contains("append-only"), "{sql}: {err}");
         }
     }
 }

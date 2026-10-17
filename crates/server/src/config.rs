@@ -137,23 +137,24 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert2::check;
 
     #[test]
     fn example_config_parses() {
         let config = Config::parse(include_str!("../../../config.example.toml")).unwrap();
-        assert!(!config.collector.owners.is_empty());
-        assert!(config.listen.ip().is_loopback());
+        check!(!config.collector.owners.is_empty());
+        check!(config.listen.ip().is_loopback());
     }
 
     #[test]
     fn minimal_config_uses_defaults() {
         let config = Config::parse("[collector]\nowners = [\"acme\"]").unwrap();
-        assert_eq!(config.listen, default_listen());
-        assert_eq!(config.poll_interval, Duration::from_secs(1800));
-        assert_eq!(config.storage.url, "sqlite://dashboard.db");
-        assert_eq!(config.auth.token_env, "GITHUB_TOKEN");
-        assert_eq!(config.collector.page_size, 25);
-        assert_eq!(config.scoring, Scoring::default());
+        check!(config.listen == default_listen());
+        check!(config.poll_interval == Duration::from_secs(1800));
+        check!(config.storage.url == "sqlite://dashboard.db");
+        check!(config.auth.token_env == "GITHUB_TOKEN");
+        check!(config.collector.page_size == 25);
+        check!(config.scoring == Scoring::default());
     }
 
     #[test]
@@ -164,14 +165,14 @@ mod tests {
             medium: 0,
             low: 3,
         };
-        assert_eq!(Scoring::default().score(&counts), 10 + 2 * 5 + 3);
+        check!(Scoring::default().score(&counts) == 10 + 2 * 5 + 3);
     }
 
     #[test]
     fn rejects_empty_and_invalid_configs() {
-        assert!(Config::parse("").is_err());
-        assert!(Config::parse("[collector]\nexternal_repos = [\"nope\"]").is_err());
-        assert!(Config::parse("typo = 1\n[collector]\nowners = [\"a\"]").is_err());
-        assert!(Config::parse("poll_interval = \"5s\"\n[collector]\nowners = [\"a\"]").is_err());
+        check!(Config::parse("").is_err());
+        check!(Config::parse("[collector]\nexternal_repos = [\"nope\"]").is_err());
+        check!(Config::parse("typo = 1\n[collector]\nowners = [\"a\"]").is_err());
+        check!(Config::parse("poll_interval = \"5s\"\n[collector]\nowners = [\"a\"]").is_err());
     }
 }

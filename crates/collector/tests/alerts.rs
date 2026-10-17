@@ -1,3 +1,4 @@
+use assert2::check;
 use collector::{Collector, CollectorConfig};
 use gh::{ClientConfig, GitHub, PatProvider, Secret};
 use serde_json::{Value, json};
@@ -158,7 +159,7 @@ async fn tracks_alert_lifecycle_across_runs() {
     // Everything else (me/app code and secret scanning) answers 404.
 
     let first = collector.run().await.unwrap();
-    assert_eq!(first.status, RunStatus::Succeeded, "{:?}", first.errors);
+    check!(first.status == RunStatus::Succeeded, "{:?}", first.errors);
 
     let repos = store.list_repos(&RepoFilter::default()).await.unwrap();
     let counts = |name: &str| {
@@ -168,30 +169,26 @@ async fn tracks_alert_lifecycle_across_runs() {
             .unwrap()
             .open_alerts
     };
-    assert_eq!(
+    check!(
         (
             counts("api").critical,
             counts("api").high,
             counts("api").low
-        ),
-        (1, 1, 1)
+        ) == (1, 1, 1)
     );
-    assert_eq!(counts("web").total(), 0);
-    assert_eq!(counts("app").critical, 1);
-    assert_eq!(counts("forked").total(), 0);
+    check!(counts("web").total() == 0);
+    check!(counts("app").critical == 1);
+    check!(counts("forked").total() == 0);
 
     let app = store.get_repo("me", "app").await.unwrap().unwrap();
     let statuses = store.source_statuses(app.id).await.unwrap();
     let status_of = |source| statuses.iter().find(|s| s.source == source).unwrap().status;
-    assert_eq!(status_of(AlertSource::Dependabot), SourceStatus::Ok);
-    assert_eq!(
-        status_of(AlertSource::CodeScanning),
-        SourceStatus::Unavailable
-    );
+    check!(status_of(AlertSource::Dependabot) == SourceStatus::Ok);
+    check!(status_of(AlertSource::CodeScanning) == SourceStatus::Unavailable);
 
     let forked = store.get_repo("me", "forked").await.unwrap().unwrap();
     let skipped = store.source_statuses(forked.id).await.unwrap();
-    assert!(skipped.iter().all(|s| s.status == SourceStatus::Skipped));
+    check!(skipped.iter().all(|s| s.status == SourceStatus::Skipped));
 
     let web = store.get_repo("acme", "web").await.unwrap().unwrap();
     let web_status = store.source_statuses(web.id).await.unwrap();
@@ -199,8 +196,8 @@ async fn tracks_alert_lifecycle_across_runs() {
         .iter()
         .find(|s| s.source == AlertSource::CodeScanning)
         .unwrap();
-    assert_eq!(code.status, SourceStatus::Unavailable);
-    assert_eq!(code.message.as_deref(), Some("Code scanning is not enabled"));
+    check!(code.status == SourceStatus::Unavailable);
+    check!(code.message.as_deref() == Some("Code scanning is not enabled"));
 
     // Run 2: alert #2 is no longer listed; GitHub says it was fixed.
     server.reset().await;
@@ -240,8 +237,8 @@ async fn tracks_alert_lifecycle_across_runs() {
     .await;
 
     let second = collector.run().await.unwrap();
-    assert_eq!(second.status, RunStatus::Partial);
-    assert!(
+    check!(second.status == RunStatus::Partial);
+    check!(
         second
             .errors
             .iter()
@@ -249,9 +246,9 @@ async fn tracks_alert_lifecycle_across_runs() {
     );
 
     let api = store.get_repo("acme", "api").await.unwrap().unwrap();
-    assert_eq!(api.open_alerts.low, 0, "fixed alert is no longer open");
-    assert_eq!(
-        api.open_alerts.critical, 1,
+    check!(api.open_alerts.low == 0, "fixed alert is no longer open");
+    check!(
+        api.open_alerts.critical == 1,
         "code scanning alert survives the failed fetch"
     );
 
@@ -265,9 +262,9 @@ async fn tracks_alert_lifecycle_across_runs() {
         )
         .await
         .unwrap();
-    assert_eq!(fixed.len(), 1);
-    assert_eq!(fixed[0].record.number, 2);
-    assert!(fixed[0].record.closed_at.is_some());
+    check!(fixed.len() == 1);
+    check!(fixed[0].record.number == 2);
+    check!(fixed[0].record.closed_at.is_some());
 
     let events = store
         .alert_events(&EventFilter {
@@ -277,14 +274,14 @@ async fn tracks_alert_lifecycle_across_runs() {
         })
         .await
         .unwrap();
-    assert_eq!(events[0].kind, EventKind::Fixed);
-    assert_eq!(events[0].number, 2);
-    assert_eq!(
+    check!(events[0].kind == EventKind::Fixed);
+    check!(events[0].number == 2);
+    check!(
         events
             .iter()
             .filter(|e| e.kind == EventKind::Opened)
-            .count(),
-        3
+            .count()
+            == 3
     );
 
     let code = store
@@ -297,9 +294,6 @@ async fn tracks_alert_lifecycle_across_runs() {
         )
         .await
         .unwrap();
-    assert_eq!(code[0].record.severity, Severity::Critical);
-    assert_eq!(
-        code[0].record.location.as_deref(),
-        Some("rust/sql-injection in src/db.rs")
-    );
+    check!(code[0].record.severity == Severity::Critical);
+    check!(code[0].record.location.as_deref() == Some("rust/sql-injection in src/db.rs"));
 }
