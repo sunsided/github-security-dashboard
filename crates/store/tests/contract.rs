@@ -666,19 +666,28 @@ fn postgres_url() -> String {
 /// Each test gets a fresh schema of its own, recreated on every run.
 #[cfg(feature = "postgres")]
 async fn postgres_schema(test: &str) -> String {
+    use sqlx::Connection;
+
     let url = postgres_url();
     let schema = format!("contract_{test}");
-    let admin = sqlx::PgPool::connect(&url).await.unwrap();
+    // Test function names are plain identifiers; anything else is a bug here.
+    assert2::assert!(
+        schema
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "unexpected schema name {schema:?}"
+    );
+    let mut admin = sqlx::PgConnection::connect(&url).await.unwrap();
     for ddl in [
-        format!("DROP SCHEMA IF EXISTS {schema} CASCADE"),
-        format!("CREATE SCHEMA {schema}"),
+        format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"),
+        format!("CREATE SCHEMA \"{schema}\""),
     ] {
-        // The schema name is derived from the test function's name.
         sqlx::query(sqlx::AssertSqlSafe(ddl))
-            .execute(&admin)
+            .execute(&mut admin)
             .await
             .unwrap();
     }
+    admin.close().await.unwrap();
     let separator = if url.contains('?') { '&' } else { '?' };
     format!("{url}{separator}options=-c%20search_path%3D{schema}")
 }
