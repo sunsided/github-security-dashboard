@@ -1,8 +1,18 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { requestRefresh, SEVERITIES, type Repo, type RepoKind, type Severity } from '#lib/api.js';
+	import {
+		requestRefresh,
+		SEVERITIES,
+		SOURCE_LABELS,
+		type AlertSource,
+		type Repo,
+		type RepoKind,
+		type Severity
+	} from '#lib/api.js';
 	import ActivityBadge from '#lib/components/ActivityBadge.svelte';
+	import DistributionChart from '#lib/components/DistributionChart.svelte';
+	import WidespreadIssues from '#lib/components/WidespreadIssues.svelte';
 	import { live } from '#lib/realtime.svelte.js';
 	import SeverityBadge, { SEVERITY_GLYPHS } from '#lib/components/SeverityBadge.svelte';
 	import StatTile from '#lib/components/StatTile.svelte';
@@ -45,6 +55,23 @@
 	let showNotRefreshed = $state(false);
 	let onlyAlerts = $state(false);
 	let visibility = $state<'' | 'public' | 'private'>('');
+
+	/** Table narrowed to the repositories of a chart bar or an issue. */
+	type Focus = { id: string; label: string; repoIds: Set<number> };
+	let focus = $state<Focus | null>(null);
+
+	function toggleFocus(next: Focus) {
+		focus = focus?.id === next.id ? null : next;
+		if (focus) document.getElementById('repositories')?.scrollIntoView({ behavior: 'smooth' });
+	}
+
+	const ageLabels: Record<string, string> = {
+		week: 'This week',
+		month: '1 to 4 weeks',
+		quarter: '1 to 3 months',
+		older: 'Over 3 months'
+	};
+	const sourceLabel = (key: string) => SOURCE_LABELS[key as AlertSource] ?? key;
 	let refreshing = $state(false);
 	let refreshError = $state<string | null>(null);
 
@@ -78,6 +105,7 @@
 				(!owner || r.owner === owner) &&
 				(!kind || r.kind === kind) &&
 				(!onlyAlerts || r.risk_score > 0) &&
+				(!focus || focus.repoIds.has(r.id)) &&
 				(!needle || `${r.owner}/${r.name}`.toLowerCase().includes(needle))
 		);
 		const direction = descending ? -1 : 1;
@@ -184,7 +212,77 @@
 	{/if}
 </section>
 
-<section class="filters" aria-label="Filters">
+<section class="insights" aria-labelledby="insights-heading">
+	<div class="insights-head">
+		<h2 id="insights-heading">Where the alerts are</h2>
+		<ul class="legend" aria-label="Severity colors">
+			{#each SEVERITIES as severity (severity)}
+				<li><span class="swatch {severity}" aria-hidden="true"></span>{severity}</li>
+			{/each}
+		</ul>
+	</div>
+	<div class="charts">
+		<DistributionChart
+			title="By source"
+			buckets={data.insights.by_source}
+			label={sourceLabel}
+			selected={focus?.id.startsWith('source:') ? focus.id.slice(7) : null}
+			onselect={(b) =>
+				toggleFocus({
+					id: `source:${b.key}`,
+					label: sourceLabel(b.key),
+					repoIds: new Set(b.repo_ids)
+				})}
+		/>
+		<DistributionChart
+			title="By ecosystem"
+			buckets={data.insights.by_ecosystem}
+			empty="No dependency alerts."
+			selected={focus?.id.startsWith('ecosystem:') ? focus.id.slice(10) : null}
+			onselect={(b) =>
+				toggleFocus({
+					id: `ecosystem:${b.key}`,
+					label: `Ecosystem ${b.key}`,
+					repoIds: new Set(b.repo_ids)
+				})}
+		/>
+		<DistributionChart
+			title="By owner"
+			buckets={data.insights.by_owner}
+			selected={focus?.id.startsWith('owner:') ? focus.id.slice(6) : null}
+			onselect={(b) =>
+				toggleFocus({
+					id: `owner:${b.key}`,
+					label: `Owner ${b.key}`,
+					repoIds: new Set(b.repo_ids)
+				})}
+		/>
+		<DistributionChart
+			title="By age"
+			buckets={data.insights.by_age.filter((b) => b.total > 0)}
+			label={(key) => ageLabels[key] ?? key}
+			selected={focus?.id.startsWith('age:') ? focus.id.slice(4) : null}
+			onselect={(b) =>
+				toggleFocus({
+					id: `age:${b.key}`,
+					label: `Opened ${(ageLabels[b.key] ?? b.key).toLowerCase()}`,
+					repoIds: new Set(b.repo_ids)
+				})}
+		/>
+	</div>
+	<WidespreadIssues
+		issues={data.insights.widespread}
+		selected={focus?.id.startsWith('issue:') ? focus.id.slice(6) : null}
+		onselect={(issue) =>
+			toggleFocus({
+				id: `issue:${issue.ids[0]}`,
+				label: issue.ids[0],
+				repoIds: new Set(issue.repositories.map((r) => r.id))
+			})}
+	/>
+</section>
+
+<section class="filters" aria-label="Filters" id="repositories">
 	<input
 		type="search"
 		placeholder="Filter by name"
@@ -221,6 +319,12 @@
 			<input type="checkbox" bind:checked={showNotRefreshed} />
 			Show {notRefreshedCount} not refreshed
 		</label>
+	{/if}
+	{#if focus}
+		<span class="focus">
+			Showing: {focus.label}
+			<button onclick={() => (focus = null)} aria-label="Clear {focus.label} filter">✕</button>
+		</span>
 	{/if}
 	<span class="count">{visible.length} of {data.repos.length}</span>
 </section>
@@ -365,6 +469,90 @@
 		grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 		gap: 0.75rem;
 		margin: 1.25rem 0;
+	}
+
+	.insights {
+		display: grid;
+		gap: 0.75rem;
+		margin: 0 0 1.5rem;
+	}
+
+	.insights-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0.5rem 1rem;
+	}
+
+	.insights-head h2 {
+		margin: 0;
+		font-size: 1.1rem;
+	}
+
+	.legend {
+		display: flex;
+		gap: 1rem;
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-size: 0.8rem;
+		color: var(--ink-secondary);
+	}
+
+	.legend li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.swatch {
+		width: 12px;
+		height: 10px;
+		border-radius: 0 2px 2px 0;
+	}
+
+	.swatch.critical {
+		background: var(--critical);
+	}
+
+	.swatch.high {
+		background: var(--serious);
+	}
+
+	.swatch.medium {
+		background: var(--warning);
+	}
+
+	.swatch.low {
+		background: var(--ink-muted);
+	}
+
+	.charts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+		gap: 0.75rem;
+	}
+
+	.focus {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.15rem 0.3rem 0.15rem 0.6rem;
+		border: 1px solid var(--accent);
+		border-radius: 999px;
+		font-size: 0.85rem;
+	}
+
+	.focus button {
+		all: unset;
+		cursor: pointer;
+		padding: 0 0.3rem;
+		color: var(--ink-secondary);
+	}
+
+	.focus button:focus-visible {
+		outline: 2px solid var(--accent);
 	}
 
 	.filters {

@@ -204,6 +204,39 @@ export async function getDeliveries(fetch: Fetch): Promise<Delivery[] | null> {
 	return response.json() as Promise<Delivery[]>;
 }
 
+export interface Bucket {
+	key: string;
+	counts: SeverityCounts;
+	total: number;
+	repo_ids: number[];
+}
+
+export interface IssueRepository {
+	id: number;
+	owner: string;
+	name: string;
+	alerts: { source: AlertSource; number: number; url: string; estimated: boolean }[];
+}
+
+export interface Issue {
+	ids: string[];
+	title: string;
+	severity: Severity;
+	sources: AlertSource[];
+	estimated_only: boolean;
+	repositories: IssueRepository[];
+}
+
+export interface Insights {
+	by_source: Bucket[];
+	by_ecosystem: Bucket[];
+	by_owner: Bucket[];
+	by_age: Bucket[];
+	widespread: Issue[];
+}
+
+export const getInsights = (fetch: Fetch) => getJson<Insights>(fetch, '/api/insights');
+
 /** Asks the server for a collector run as soon as possible. */
 export async function requestRefresh(): Promise<void> {
 	const response = await fetch('/api/refresh', {
