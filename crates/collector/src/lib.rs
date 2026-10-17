@@ -155,8 +155,23 @@ impl Collector {
                 .owner_repositories(owner, self.config.page_size)
                 .await
             {
-                Ok(list) => {
-                    for repo in list {
+                Ok(listing) => {
+                    if listing.hidden > 0 {
+                        // Usually a missing App or token permission; the
+                        // affected repositories keep their last data.
+                        let reasons = if listing.hidden_reasons.is_empty() {
+                            "no reason given".to_owned()
+                        } else {
+                            listing.hidden_reasons.join("; ")
+                        };
+                        let message = format!(
+                            "owner {owner}: {} repositories are listed but not readable with this token ({reasons})",
+                            listing.hidden
+                        );
+                        tracing::warn!("{message}");
+                        errors.push(message);
+                    }
+                    for repo in listing.repositories {
                         let kind = match repo.owner_kind {
                             OwnerKind::Organization => RepoKind::Org,
                             OwnerKind::User => RepoKind::User,

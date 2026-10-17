@@ -26,6 +26,8 @@ pub struct AppState {
     pub github: Arc<GitHub>,
     pub scheduler: Arc<Scheduler>,
     pub scoring: Scoring,
+    /// See [`gh::TokenProvider::label`].
+    pub auth: &'static str,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -212,6 +214,7 @@ struct Summary {
     stale_after_days: i64,
     open_alerts: SeverityCounts,
     repos_with_alerts: usize,
+    auth: &'static str,
     collecting: bool,
     last_run: Option<Run>,
     rate_limits: HashMap<String, RateLimit>,
@@ -247,6 +250,7 @@ async fn summary(State(state): State<AppState>) -> ApiResult<Summary> {
             .iter()
             .filter(|r| r.repo.open_alerts.total() > 0)
             .count(),
+        auth: state.auth,
         collecting: state.scheduler.is_running(),
         last_run: state.store.list_runs(1).await?.into_iter().next(),
         rate_limits: state.github.rate_limits(),

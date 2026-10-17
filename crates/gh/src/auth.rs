@@ -11,6 +11,11 @@ use std::fmt;
 #[async_trait]
 pub trait TokenProvider: Send + Sync {
     async fn token(&self, owner: &str) -> Result<Secret>;
+
+    /// How the server authenticates, for status displays.
+    fn label(&self) -> &'static str {
+        "personal access token"
+    }
 }
 
 /// A token that never shows up in `Debug` output or logs.

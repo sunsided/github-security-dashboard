@@ -16,7 +16,7 @@ $EDITOR config.toml .env
 task dev       # server on :8080, Vite dev server with hot reload on :5173
 ```
 
-`config.toml` lists the owners (organizations or users) whose repositories are tracked, plus any external repositories as `owner/name`. The GitHub token goes into `.env` as `GITHUB_TOKEN`; the config file only names the variable, so it can be shared without leaking anything. A fine-grained token needs read access to repository metadata and, for the upcoming alert collection, to Dependabot, code scanning and secret scanning alerts.
+`config.toml` lists the owners (organizations or users) whose repositories are tracked, plus any external repositories as `owner/name`. The GitHub token goes into `.env` as `GITHUB_TOKEN`; the config file only names the variable, so it can be shared without leaking anything. Which permissions the token needs, and how to use a GitHub App instead, is described under [Authentication](#authentication).
 
 Other tasks worth knowing (`task` alone lists all of them):
 
@@ -35,13 +35,35 @@ Alerts are cheap for organizations (one request per source covers every reposito
 
 Every alert state change is written to an append-only log, which the Activity page shows. "Fixed" and "dismissed" are told apart by looking up alerts individually once they drop out of the open list; a source that couldn't be read in a run never closes anything, so a flaky 503 doesn't rewrite history.
 
+## Authentication
+
+There are two ways in, and they combine.
+
+A **personal access token** is the quick start: put it into `.env` as `GITHUB_TOKEN` and you're done. A fine-grained token needs read-only access to Metadata, Contents, Issues, Pull requests, Dependabot alerts, Code scanning alerts and Secret scanning alerts. The catch is that it acts as you, sees what you see, and shares your hourly quota with everything else you do on GitHub.
+
+A **GitHub App** is the better fit for anything that runs unattended. It isn't tied to a person, its installation tokens expire after an hour, and each installation gets its own rate limit. Setting one up takes a few minutes:
+
+1. Create the App under *Settings → Developer settings → GitHub Apps* (or in the organization's settings). It needs no webhook, so untick *Active* there, and no callback URL.
+2. Grant the same read-only repository permissions as listed for the token above.
+3. Install it on each organization and on your own account, for all repositories or a selection.
+4. Generate a private key and save the PEM next to `config.toml` (`*.pem` is gitignored).
+5. Point the config at it:
+
+   ```toml
+   [auth.app]
+   app_id = 123456                     # or the client ID, "Iv23..."
+   private_key_path = "github-app.pem" # relative to config.toml
+   ```
+
+Owners without an installation, typically external repositories, still need a token from somewhere. If `GITHUB_TOKEN` is set, it is used for those; otherwise the server borrows the oldest installation's token, which is enough to read public repositories. Alerts of repositories you don't administer are out of reach either way; that's what the planned OSV estimate is for.
+
 ## Status
 
 Work in progress. The plan, roughly in order:
 
 1. ~~Workspace scaffold, configuration, personal access token auth, repository stats via GraphQL, pluggable storage with an SQLite backend, and a minimal table UI.~~ Done.
 2. ~~Alerts from Dependabot, code scanning and secret scanning (organization-wide endpoints where possible, per repository otherwise), severity scoring and a detail page.~~ Done.
-3. GitHub App authentication.
+3. ~~GitHub App authentication.~~ Done.
 4. External repositories: when I can't read their alerts (GitHub only shows them to admins and security managers), the server pulls the dependency SBOM and matches it against [OSV](https://osv.dev). Those numbers are labeled as estimates, because that's what they are.
 5. A PostgreSQL backend for keeping the audit history long term.
 6. A digest of newly opened alerts by email or Slack.

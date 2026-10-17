@@ -55,6 +55,17 @@ pub enum OwnerKind {
     User,
 }
 
+/// An owner's repositories as far as the token can read them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepositoryListing {
+    pub repositories: Vec<Repository>,
+    /// Entries GitHub listed but returned as `null`, typically private
+    /// repositories the token lacks a permission for.
+    pub hidden: usize,
+    /// GitHub's distinct explanations for the hidden entries.
+    pub hidden_reasons: Vec<String>,
+}
+
 /// Repository metadata and statistics, flattened from GraphQL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Repository {
@@ -154,7 +165,9 @@ struct OwnerReposNode {
 #[serde(rename_all = "camelCase")]
 struct RepoConnection {
     page_info: PageInfo,
-    nodes: Vec<RepoNode>,
+    /// Entries the token may not read (e.g. repositories a GitHub App was
+    /// not installed on) come back as `null`.
+    nodes: Vec<Option<RepoNode>>,
 }
 
 #[derive(Deserialize)]
@@ -200,35 +213,84 @@ fn is_not_found(e: &crate::GraphQlError) -> bool {
     e.kind.as_deref() == Some("NOT_FOUND")
 }
 
+/// The entry of the repository list an error is about, if any:
+/// `["repositoryOwner", "repositories", "nodes", 3, "issues"]` is about
+/// entry 3. GitHub nulls a field it may not resolve, and the null bubbles
+/// up to the entry when the field is non-nullable.
+fn repository_entry(e: &crate::GraphQlError) -> Option<usize> {
+    match e.path.as_slice() {
+        [owner, repos, nodes, index, ..]
+            if *owner == "repositoryOwner" && *repos == "repositories" && *nodes == "nodes" =>
+        {
+            index.as_u64().and_then(|i| usize::try_from(i).ok())
+        }
+        _ => None,
+    }
+}
+
+/// Errors the repository listing can live with: the owner itself not
+/// existing (reported as `None` data), or a problem with single entries,
+/// which are then left out. Anything else fails the request.
+fn tolerable_in_listing(e: &crate::GraphQlError) -> bool {
+    (is_not_found(e) && e.path.len() == 1 && e.path[0] == "repositoryOwner")
+        || repository_entry(e).is_some()
+}
+
+fn is_repository_not_found(e: &crate::GraphQlError) -> bool {
+    is_not_found(e) && e.path.len() == 1 && e.path[0] == "repository"
+}
+
 impl GitHub {
     /// All repositories owned by an organization or user, with statistics.
     ///
     /// `page_size` trades request count against GraphQL query cost; counting
     /// commit history is expensive on large repositories, so keep it modest.
-    pub async fn owner_repositories(&self, login: &str, page_size: u32) -> Result<Vec<Repository>> {
+    pub async fn owner_repositories(
+        &self,
+        login: &str,
+        page_size: u32,
+    ) -> Result<RepositoryListing> {
         let query = format!("{OWNER_REPOS_QUERY}{REPO_FIELDS}");
-        let mut repos = Vec::new();
+        let mut listing = RepositoryListing::default();
         let mut after: Option<String> = None;
         loop {
-            let data: Option<OwnerReposData> = self
+            let (data, tolerated): (Option<OwnerReposData>, _) = self
                 .graphql(
                     login,
                     &query,
                     json!({ "login": login, "first": page_size, "after": after }),
-                    is_not_found,
+                    tolerable_in_listing,
                 )
                 .await?;
             let owner = data
                 .and_then(|d| d.repository_owner)
                 .ok_or_else(|| Error::NotFound(format!("owner {login}")))?;
             let connection = owner.repositories;
-            repos.extend(connection.nodes.into_iter().map(Repository::from));
+            // An entry with any error is left out even when GitHub returned
+            // it, since a field it could not resolve would read as a real
+            // value (a missing default branch as an empty repository).
+            let affected: Vec<usize> = tolerated.iter().filter_map(repository_entry).collect();
+            for (index, node) in connection.nodes.into_iter().enumerate() {
+                match node {
+                    Some(node) if !affected.contains(&index) => {
+                        listing.repositories.push(Repository::from(node));
+                    }
+                    _ => listing.hidden += 1,
+                }
+            }
+            for error in tolerated {
+                if repository_entry(&error).is_some()
+                    && !listing.hidden_reasons.contains(&error.message)
+                {
+                    listing.hidden_reasons.push(error.message);
+                }
+            }
             match connection.page_info {
                 PageInfo {
                     has_next_page: true,
                     end_cursor: Some(cursor),
                 } => after = Some(cursor),
-                _ => return Ok(repos),
+                _ => return Ok(listing),
             }
         }
     }
@@ -236,12 +298,12 @@ impl GitHub {
     /// A single repository with statistics.
     pub async fn repository(&self, owner: &str, name: &str) -> Result<Repository> {
         let query = format!("{REPO_QUERY}{REPO_FIELDS}");
-        let data: Option<RepoData> = self
+        let (data, _): (Option<RepoData>, _) = self
             .graphql(
                 owner,
                 &query,
                 json!({ "owner": owner, "name": name }),
-                is_not_found,
+                is_repository_not_found,
             )
             .await?;
         data.and_then(|d| d.repository)

@@ -126,6 +126,8 @@ export interface Summary {
 	stale_after_days: number;
 	open_alerts: SeverityCounts;
 	repos_with_alerts: number;
+	/** How the server authenticates, e.g. "GitHub App". */
+	auth: string;
 	collecting: boolean;
 	last_run: Run | null;
 	rate_limits: Record<string, RateLimit>;

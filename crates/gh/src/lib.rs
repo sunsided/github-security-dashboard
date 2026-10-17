@@ -5,16 +5,18 @@
 //! requests. Authentication is pluggable through [`TokenProvider`].
 
 mod alerts;
+mod app;
 mod auth;
 mod client;
 mod link;
 mod repos;
 
 pub use alerts::{AlertKind, AlertSeverity, AlertStatus, SecurityAlert};
+pub use app::AppProvider;
 pub use auth::{PatProvider, Secret, TokenProvider};
 pub use client::{ClientConfig, GitHub, GraphQlError, RateLimit};
 pub use link::{find_rel, last_page};
-pub use repos::{OwnerKind, Repository};
+pub use repos::{OwnerKind, Repository, RepositoryListing};
 
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
