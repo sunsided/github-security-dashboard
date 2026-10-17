@@ -1,5 +1,7 @@
 # GitHub Security Dashboard
 
+[![CI](https://github.com/sunsided/github-security-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sunsided/github-security-dashboard/actions/workflows/ci.yml)
+
 A self-hosted dashboard that collects security alerts and repository health data from the GitHub API and puts every repository I care about on one ranked page.
 
 This exists because GitHub shows Dependabot, code scanning and secret scanning alerts per repository, in that repository's Security tab, and nowhere else I was looking. With a handful of repositories in an enterprise organization, a number of my own under [sunsided](https://github.com/sunsided) and some external ones I depend on, "open each Security tab and squint" stopped being a process. The alert emails I expected never showed up either (that one is probably a notification setting, but the point stands).
