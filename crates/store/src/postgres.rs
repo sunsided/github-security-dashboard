@@ -4,9 +4,9 @@ use crate::alerts::{self, *};
 use crate::api::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use sqlx::Row;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::types::Json;
-use sqlx::{AssertSqlSafe, Row};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -26,7 +26,13 @@ impl PostgresStore {
     }
 }
 
-const REPO_COLUMNS: &str = "
+// SQL fragments are macros rather than constants so that queries are put
+// together with `concat!` at compile time. The result is a `&'static str`,
+// which sqlx accepts as safe as-is; a runtime value can't end up in the SQL
+// text without a compile error.
+macro_rules! repo_columns {
+    () => {
+        "
     r.id, r.owner, r.name, r.kind, r.url, r.description, r.archived, r.fork,
     r.private, r.language, r.default_branch, r.last_seen_run,
     s.run_id AS s_run_id, s.taken_at AS s_taken_at, s.open_issues AS s_open_issues,
@@ -34,10 +40,14 @@ const REPO_COLUMNS: &str = "
     s.tags AS s_tags, s.releases AS s_releases, s.stars AS s_stars, s.forks AS s_forks,
     s.pushed_at AS s_pushed_at, s.last_commit_at AS s_last_commit_at,
     COALESCE(a.critical, 0) AS a_critical, COALESCE(a.high, 0) AS a_high,
-    COALESCE(a.medium, 0) AS a_medium, COALESCE(a.low, 0) AS a_low";
+    COALESCE(a.medium, 0) AS a_medium, COALESCE(a.low, 0) AS a_low"
+    };
+}
 
 /// Latest snapshot and open alert counts per repository.
-const REPO_JOINS: &str = "
+macro_rules! repo_joins {
+    () => {
+        "
     LEFT JOIN repo_snapshots s
         ON s.repo_id = r.id
        AND s.run_id = (SELECT MAX(run_id) FROM repo_snapshots WHERE repo_id = r.id)
@@ -48,14 +58,24 @@ const REPO_JOINS: &str = "
                COUNT(*) FILTER (WHERE severity = 'medium') AS medium,
                COUNT(*) FILTER (WHERE severity = 'low') AS low
         FROM alerts WHERE state = 'open' GROUP BY repo_id
-    ) a ON a.repo_id = r.id";
+    ) a ON a.repo_id = r.id"
+    };
+}
 
-const ALERT_COLUMNS: &str = "
+macro_rules! alert_columns {
+    () => {
+        "
     id, repo_id, source, number, state, severity, title, location, html_url,
-    created_at, closed_at, estimated, first_seen_run, last_seen_run";
+    created_at, closed_at, estimated, first_seen_run, last_seen_run"
+    };
+}
 
-const SEVERITY_ORDER: &str = "
-    CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END";
+macro_rules! severity_order {
+    () => {
+        "
+    CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END"
+    };
+}
 
 fn repo_from_row(row: &PgRow) -> Result<RepoOverview> {
     let latest = match row.try_get::<Option<i64>, _>("s_run_id")? {
@@ -254,15 +274,18 @@ impl Store for PostgresStore {
     }
 
     async fn list_repos(&self, filter: &RepoFilter) -> Result<Vec<RepoOverview>> {
-        // Only compile-time constants are interpolated; values are bound.
-        let sql = format!(
-            "SELECT {REPO_COLUMNS} FROM repos r {REPO_JOINS}
+        let sql = concat!(
+            "SELECT ",
+            repo_columns!(),
+            " FROM repos r ",
+            repo_joins!(),
+            "
              WHERE ($1::text IS NULL OR lower(r.owner) = lower($1))
                AND ($2::text IS NULL OR r.kind = $2)
                AND ($3 OR NOT r.archived)
              ORDER BY lower(r.owner), lower(r.name)"
         );
-        let rows = sqlx::query(AssertSqlSafe(sql))
+        let rows = sqlx::query(sql)
             .bind(&filter.owner)
             .bind(filter.kind.map(RepoKind::as_str))
             .bind(filter.include_archived)
@@ -272,11 +295,15 @@ impl Store for PostgresStore {
     }
 
     async fn get_repo(&self, owner: &str, name: &str) -> Result<Option<RepoOverview>> {
-        let sql = format!(
-            "SELECT {REPO_COLUMNS} FROM repos r {REPO_JOINS}
+        let sql = concat!(
+            "SELECT ",
+            repo_columns!(),
+            " FROM repos r ",
+            repo_joins!(),
+            "
              WHERE lower(r.owner) = lower($1) AND lower(r.name) = lower($2)"
         );
-        let row = sqlx::query(AssertSqlSafe(sql))
+        let row = sqlx::query(sql)
             .bind(owner)
             .bind(name)
             .fetch_optional(&self.pool)
@@ -330,12 +357,14 @@ impl Store for PostgresStore {
         let mut events = 0;
 
         for alert in alerts {
-            let sql = format!(
-                "SELECT {ALERT_COLUMNS} FROM alerts
+            let sql = concat!(
+                "SELECT ",
+                alert_columns!(),
+                " FROM alerts
                  WHERE repo_id = $1 AND source = $2 AND number = $3
                  FOR UPDATE"
             );
-            let previous = sqlx::query(AssertSqlSafe(sql))
+            let previous = sqlx::query(sql)
                 .bind(repo.0)
                 .bind(alert.source.as_str())
                 .bind(alert.number)
@@ -400,14 +429,18 @@ impl Store for PostgresStore {
     }
 
     async fn list_alerts(&self, repo: RepoId, filter: &AlertFilter) -> Result<Vec<Alert>> {
-        let sql = format!(
-            "SELECT {ALERT_COLUMNS} FROM alerts
+        let sql = concat!(
+            "SELECT ",
+            alert_columns!(),
+            " FROM alerts
              WHERE repo_id = $1
                AND ($2::text IS NULL OR source = $2)
                AND ($3::text IS NULL OR state = $3)
-             ORDER BY (state = 'open') DESC, {SEVERITY_ORDER}, created_at DESC, number DESC"
+             ORDER BY (state = 'open') DESC, ",
+            severity_order!(),
+            ", created_at DESC, number DESC"
         );
-        let rows = sqlx::query(AssertSqlSafe(sql))
+        let rows = sqlx::query(sql)
             .bind(repo.0)
             .bind(filter.source.map(AlertSource::as_str))
             .bind(filter.state.map(AlertState::as_str))
