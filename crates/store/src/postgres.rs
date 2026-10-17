@@ -483,7 +483,7 @@ impl Store for PostgresStore {
                AND ($2::timestamptz IS NULL OR e.at >= $2)
                AND ($4 OR NOT e.baseline)
                AND ($5::bigint IS NULL OR e.id > $5)
-             ORDER BY e.id DESC
+             ORDER BY CASE WHEN $6 THEN e.id END ASC, e.id DESC
              LIMIT $3",
         )
         .bind(filter.repo.map(|r| r.0))
@@ -491,6 +491,7 @@ impl Store for PostgresStore {
         .bind(i64::from(filter.limit))
         .bind(filter.include_baseline)
         .bind(filter.after_id)
+        .bind(filter.oldest_first)
         .fetch_all(&self.pool)
         .await?;
 

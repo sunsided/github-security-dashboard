@@ -278,3 +278,47 @@ async fn missing_webhook_urls_fail_at_startup() {
     let err = DigestService::new(store, config, |_| None).err().unwrap();
     check!(err.contains("NOPE") && err.contains("slack"));
 }
+
+#[tokio::test]
+async fn capped_digests_continue_where_they_stopped() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let (store, repo, run) = store_with_repo().await;
+    for number in 1..=5 {
+        open(&store, repo, run, number, Severity::Medium, false).await;
+    }
+    let (mut config, env) = config(&server);
+    config.targets.retain(|t| t.name == "knative");
+    let service = DigestService::new(Arc::clone(&store), config, env)
+        .unwrap()
+        .with_event_cap(3);
+
+    service.send_now(Utc::now()).await;
+    service.send_now(Utc::now()).await;
+    let requests = server.received_requests().await.unwrap();
+    let digests = bodies(&requests, "/hook");
+    let titles = |d: &Value| -> Vec<String> {
+        let mut t: Vec<String> = d["new"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["title"].as_str().unwrap().to_owned())
+            .collect();
+        t.sort();
+        t
+    };
+    check!(digests[0]["truncated"] == true);
+    check!(digests[0]["headline"] == "3 new alerts (more in the next digest)");
+    check!(
+        titles(&digests[0]) == ["advisory 1", "advisory 2", "advisory 3"],
+        "the oldest first"
+    );
+    check!(digests[1]["truncated"] == false);
+    check!(
+        titles(&digests[1]) == ["advisory 4", "advisory 5"],
+        "nothing lost"
+    );
+}

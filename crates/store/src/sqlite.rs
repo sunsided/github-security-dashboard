@@ -500,7 +500,7 @@ impl Store for SqliteStore {
              WHERE (?1 IS NULL OR a.repo_id = ?1) AND (?2 IS NULL OR e.at >= ?2)
                AND (?4 OR e.baseline = 0)
                AND (?5 IS NULL OR e.id > ?5)
-             ORDER BY e.id DESC
+             ORDER BY CASE WHEN ?6 THEN e.id END ASC, e.id DESC
              LIMIT ?3",
         )
         .bind(filter.repo.map(|r| r.0))
@@ -508,6 +508,7 @@ impl Store for SqliteStore {
         .bind(i64::from(filter.limit))
         .bind(filter.include_baseline)
         .bind(filter.after_id)
+        .bind(filter.oldest_first)
         .fetch_all(&self.pool)
         .await?;
 

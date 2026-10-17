@@ -23,7 +23,8 @@ use serde::Serialize;
 use std::sync::Arc;
 use store::{DeliveryRecord, EventFilter, RepoFilter, SeverityCounts, Store};
 
-/// Upper bound of events in one digest; a day's worth is far below.
+/// Events in one digest at most; a day's worth is normally far below.
+/// Beyond it, the digest covers the oldest events and the rest follow.
 const MAX_EVENTS: u32 = 10_000;
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +57,7 @@ pub struct DigestService {
     targets: Vec<Target>,
     started_at: DateTime<Utc>,
     backoff: std::time::Duration,
+    max_events: u32,
 }
 
 impl DigestService {
@@ -95,11 +97,18 @@ impl DigestService {
             targets,
             started_at: Utc::now(),
             backoff: std::time::Duration::from_secs(2),
+            max_events: MAX_EVENTS,
         })
     }
 
     pub fn with_retry_backoff(mut self, backoff: std::time::Duration) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    /// Lowers the per-digest event cap (10 000), e.g. to test truncation.
+    pub fn with_event_cap(mut self, max_events: u32) -> Self {
+        self.max_events = max_events.max(1);
         self
     }
 
@@ -184,11 +193,14 @@ impl DigestService {
                 )
             }
         };
+        // Oldest first: if the cap cuts, it cuts the newest events, and the
+        // watermark (the last event included) leaves them for next time.
         let events = self
             .store
             .alert_events(&EventFilter {
-                limit: MAX_EVENTS,
+                limit: self.max_events,
                 include_baseline: false,
+                oldest_first: true,
                 ..filter
             })
             .await?;
@@ -199,7 +211,11 @@ impl DigestService {
             now,
             totals,
             self.config.dashboard_url.clone(),
-        );
+        )
+        .map(|mut d| {
+            d.truncated = events.len() as u32 >= self.max_events;
+            d
+        });
         Ok((digest, watermark))
     }
 

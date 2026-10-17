@@ -44,18 +44,31 @@ fn source_label(source: AlertSource) -> &'static str {
     }
 }
 
+/// A URL safe to put into Slack's `<url|text>` link syntax: http(s) only,
+/// and nothing that could end the link early (`|`, `>`) or start a new one.
+fn slack_link_target(url: &str) -> Option<&str> {
+    let allowed_scheme = url.starts_with("https://") || url.starts_with("http://");
+    let clean = !url
+        .chars()
+        .any(|c| matches!(c, '<' | '>' | '|') || c.is_whitespace() || c.is_control());
+    (allowed_scheme && clean).then_some(url)
+}
+
 fn line(item: &Item) -> String {
     let change = if item.change == "opened" {
         String::new()
     } else {
         format!(" · {}", item.change)
     };
+    let repository = escape(&item.repository);
+    let target = match slack_link_target(&item.url) {
+        Some(url) => format!("<{url}|{repository}>"),
+        None => repository,
+    };
     format!(
-        "{} *{}* <{}|{}>: {} _({}{})_",
+        "{} *{}* {target}: {} _({}{})_",
         glyph(item.severity),
         item.severity,
-        item.url,
-        escape(&item.repository),
         escape(&item.title),
         source_label(item.source),
         change
@@ -184,6 +197,19 @@ mod tests {
         ));
         check!(new.contains("Use &lt;after&gt; free &amp; co"));
         check!(blocks.last().unwrap()["elements"][0]["url"] == "https://dashboard.example");
+    }
+
+    #[test]
+    fn suspicious_urls_are_not_linked() {
+        let mut injected = event(1, EventKind::Opened, Severity::High, None, Some("high"));
+        injected.html_url = "https://osv.dev/vulnerability/X|<!channel>".into();
+        let mut scheme = event(2, EventKind::Opened, Severity::High, None, Some("high"));
+        scheme.html_url = "javascript:alert(1)".into();
+        let message = slack(&digest(&[injected, scheme]), chrono_tz::UTC, 15);
+        let new = message["blocks"][2]["text"]["text"].as_str().unwrap();
+        check!(!new.contains("<!channel>"));
+        check!(!new.contains("javascript:"));
+        check!(new.contains("▲ *high* acme/api: advisory 1"), "{new}");
     }
 
     #[test]

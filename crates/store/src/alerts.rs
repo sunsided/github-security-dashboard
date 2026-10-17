@@ -127,6 +127,9 @@ pub struct EventFilter {
     pub since: Option<DateTime<Utc>>,
     /// Only events with a higher ID, i.e. recorded after that event.
     pub after_id: Option<i64>,
+    /// Oldest first instead of newest first. With a `limit`, this keeps the
+    /// events right after `after_id`, so a capped read can resume there.
+    pub oldest_first: bool,
     pub limit: u32,
     /// Also return baseline events (see [`AlertEvent::baseline`]).
     pub include_baseline: bool,

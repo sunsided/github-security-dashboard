@@ -40,6 +40,9 @@ pub struct Digest {
     pub first_event_id: i64,
     pub last_event_id: i64,
     pub events: usize,
+    /// More events were waiting than one digest takes; the rest follow in
+    /// the next one.
+    pub truncated: bool,
     /// Opened or reopened alerts, most severe first.
     pub new: Vec<Item>,
     /// Alerts whose severity went up, most severe first.
@@ -123,6 +126,7 @@ impl Digest {
             first_event_id,
             last_event_id,
             events: events.len(),
+            truncated: false,
             new,
             escalated,
             closed,
@@ -157,11 +161,15 @@ impl Digest {
         if closed > 0 {
             parts.push(format!("{closed} closed"));
         }
-        if parts.is_empty() {
-            "no new or closed alerts".into()
+        let mut headline = if parts.is_empty() {
+            "no new or closed alerts".to_owned()
         } else {
             parts.join(", ")
+        };
+        if self.truncated {
+            headline.push_str(" (more in the next digest)");
         }
+        headline
     }
 }
 
