@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use collector::Collector;
-use gh::{ClientConfig, GitHub, PatProvider};
+use gh::{ClientConfig, GitHub};
 use server::api::AppState;
 use server::config::Config;
 use server::scheduler::Scheduler;
@@ -35,8 +35,14 @@ async fn main() -> anyhow::Result<()> {
     let store = store::connect(&config.storage.url)
         .await
         .context("opening storage")?;
-    let tokens = Arc::new(PatProvider::new(config.auth.token()?));
-    let github = Arc::new(GitHub::new(ClientConfig::default(), tokens)?);
+    let client_config = ClientConfig::default();
+    let tokens = config
+        .auth
+        .provider(&client_config, |name| std::env::var(name).ok())?;
+    if config.auth.app.is_some() {
+        tracing::info!("authenticating as a GitHub App");
+    }
+    let github = Arc::new(GitHub::new(client_config, tokens)?);
     let collector = Collector::new(Arc::clone(&github), Arc::clone(&store), config.collector);
 
     if args.once {

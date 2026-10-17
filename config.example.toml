@@ -15,10 +15,19 @@ poll_interval = "30m"
 url = "sqlite://dashboard.db"
 
 [auth]
-# Name of the environment variable holding a GitHub token. A fine-grained
-# personal access token needs read access to metadata, Dependabot alerts,
-# code scanning alerts and secret scanning alerts on the tracked owners.
+# Name of the environment variable holding a personal access token. Required
+# unless a GitHub App is configured below; with an App, it is used for owners
+# the App is not installed on (e.g. external repositories), if set.
+# Permissions (fine-grained, read-only): Metadata, Contents, Issues,
+# Pull requests, Dependabot alerts, Code scanning alerts, Secret scanning
+# alerts.
 token_env = "GITHUB_TOKEN"
+
+# Authenticate as a GitHub App instead (same read-only permissions as above).
+# [auth.app]
+# app_id = 123456                    # or the client ID, "Iv23..."
+# private_key_path = "github-app.pem" # relative to this file; *.pem is gitignored
+# private_key_env = "GITHUB_APP_PRIVATE_KEY"  # alternatively, the PEM itself
 
 [collector]
 # Organizations and users whose own repositories are tracked.

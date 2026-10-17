@@ -1,11 +1,13 @@
 //! `config.toml` schema.
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use collector::CollectorConfig;
-use gh::Secret;
+use gh::{AppProvider, ClientConfig, PatProvider, Secret, TokenProvider};
 use serde::Deserialize;
+use std::fmt;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -74,32 +76,96 @@ impl Default for StorageConfig {
     }
 }
 
-/// Credentials never live in the config file itself, only the name of the
-/// environment variable holding them.
+/// Credentials never live in the config file itself: tokens come from
+/// environment variables, the App's private key from a file or variable.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthConfig {
+    /// Personal access token. Required without an App; with one, it serves
+    /// owners the App is not installed for, if set.
     #[serde(default = "default_token_env")]
     pub token_env: String,
+    pub app: Option<AppConfig>,
 }
 
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             token_env: default_token_env(),
+            app: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppConfig {
+    /// Numeric App ID or client ID (`Iv23…`).
+    pub app_id: AppId,
+    /// PEM file downloaded from the App settings; relative paths are
+    /// resolved against the directory of the config file.
+    pub private_key_path: Option<PathBuf>,
+    /// Alternatively, the environment variable holding the PEM.
+    pub private_key_env: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum AppId {
+    Number(u64),
+    Text(String),
+}
+
+impl fmt::Display for AppId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Number(n) => write!(f, "{n}"),
+            Self::Text(s) => f.write_str(s),
         }
     }
 }
 
 impl AuthConfig {
-    pub fn token(&self) -> anyhow::Result<Secret> {
-        match std::env::var(&self.token_env) {
-            Ok(token) if !token.trim().is_empty() => Ok(Secret::new(token.trim())),
-            _ => bail!(
-                "environment variable {} is not set; put a GitHub token there (see .env.example)",
-                self.token_env
-            ),
+    /// Builds the token provider. `env` looks up environment variables
+    /// (injected so tests need not mutate the process environment).
+    pub fn provider(
+        &self,
+        github: &ClientConfig,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Arc<dyn TokenProvider>> {
+        let pat = env(&self.token_env)
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty())
+            .map(|t| Arc::new(PatProvider::new(Secret::new(t))) as Arc<dyn TokenProvider>);
+
+        let Some(app) = &self.app else {
+            return pat.ok_or_else(|| {
+                anyhow!(
+                    "environment variable {} is not set; put a GitHub token there (see .env.example) \
+                     or configure [auth.app]",
+                    self.token_env
+                )
+            });
+        };
+
+        let pem = match (&app.private_key_path, &app.private_key_env) {
+            (Some(path), None) => std::fs::read(path)
+                .with_context(|| format!("reading GitHub App private key {}", path.display()))?,
+            (None, Some(var)) => env(var)
+                .with_context(|| format!("environment variable {var} is not set"))?
+                .into_bytes(),
+            _ => bail!("[auth.app] needs exactly one of private_key_path and private_key_env"),
+        };
+        let mut provider = AppProvider::new(
+            app.app_id.to_string(),
+            &pem,
+            &github.api_url,
+            &github.user_agent,
+        )?;
+        if let Some(pat) = pat {
+            provider = provider.with_fallback(pat);
         }
+        Ok(Arc::new(provider))
     }
 }
 
@@ -119,7 +185,16 @@ impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        Self::parse(&text).with_context(|| format!("parsing {}", path.display()))
+        let mut config =
+            Self::parse(&text).with_context(|| format!("parsing {}", path.display()))?;
+        if let Some(app) = &mut config.auth.app
+            && let Some(key) = &mut app.private_key_path
+            && key.is_relative()
+            && let Some(dir) = path.parent()
+        {
+            *key = dir.join(&*key);
+        }
+        Ok(config)
     }
 
     fn parse(text: &str) -> anyhow::Result<Self> {
@@ -174,5 +249,115 @@ mod tests {
         check!(Config::parse("[collector]\nexternal_repos = [\"nope\"]").is_err());
         check!(Config::parse("typo = 1\n[collector]\nowners = [\"a\"]").is_err());
         check!(Config::parse("poll_interval = \"5s\"\n[collector]\nowners = [\"a\"]").is_err());
+    }
+
+    const TEST_KEY: &str = include_str!("../../gh/tests/fixtures/test-app-key.pem");
+
+    fn auth(toml_text: &str) -> AuthConfig {
+        Config::parse(&format!("{toml_text}\n[collector]\nowners = [\"acme\"]"))
+            .unwrap()
+            .auth
+    }
+
+    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn app_id_accepts_numbers_and_client_ids() {
+        let numeric = auth("[auth.app]\napp_id = 123456\nprivate_key_env = \"KEY\"");
+        check!(numeric.app.unwrap().app_id.to_string() == "123456");
+        let client = auth("[auth.app]\napp_id = \"Iv23liabc\"\nprivate_key_env = \"KEY\"");
+        check!(client.app.unwrap().app_id == AppId::Text("Iv23liabc".into()));
+    }
+
+    #[test]
+    fn pat_is_required_without_an_app() {
+        let github = ClientConfig::default();
+        let err = auth("").provider(&github, env(&[])).err().unwrap();
+        check!(err.to_string().contains("GITHUB_TOKEN"));
+        check!(
+            auth("")
+                .provider(&github, env(&[("GITHUB_TOKEN", "ghp_x")]))
+                .is_ok()
+        );
+        check!(
+            auth("")
+                .provider(&github, env(&[("GITHUB_TOKEN", "  ")]))
+                .is_err(),
+            "blank tokens count as missing"
+        );
+    }
+
+    #[test]
+    fn app_key_from_environment() {
+        let github = ClientConfig::default();
+        let config = auth("[auth.app]\napp_id = 1\nprivate_key_env = \"APP_KEY\"");
+        check!(
+            config
+                .provider(&github, env(&[("APP_KEY", TEST_KEY)]))
+                .is_ok(),
+            "no PAT needed"
+        );
+
+        let missing = config.provider(&github, env(&[])).err().unwrap();
+        check!(missing.to_string().contains("APP_KEY"));
+
+        let garbage = config
+            .provider(&github, env(&[("APP_KEY", "nope")]))
+            .err()
+            .unwrap();
+        check!(garbage.to_string().contains("private key"));
+    }
+
+    #[test]
+    fn app_key_source_must_be_unambiguous() {
+        let github = ClientConfig::default();
+        for both_or_neither in [
+            "[auth.app]\napp_id = 1",
+            "[auth.app]\napp_id = 1\nprivate_key_env = \"K\"\nprivate_key_path = \"k.pem\"",
+        ] {
+            let err = auth(both_or_neither)
+                .provider(&github, env(&[("K", TEST_KEY)]))
+                .err()
+                .unwrap();
+            check!(err.to_string().contains("exactly one"));
+        }
+    }
+
+    #[test]
+    fn relative_key_path_is_resolved_against_the_config_file() {
+        let dir = std::env::temp_dir().join(format!("gsd-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.pem"), TEST_KEY).unwrap();
+        let config_path = dir.join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[auth.app]\napp_id = 1\nprivate_key_path = \"app.pem\"\n[collector]\nowners = [\"acme\"]",
+        )
+        .unwrap();
+
+        let config = Config::load(&config_path).unwrap();
+        let resolved = config
+            .auth
+            .app
+            .as_ref()
+            .unwrap()
+            .private_key_path
+            .clone()
+            .unwrap();
+        check!(resolved == dir.join("app.pem"));
+        check!(
+            config
+                .auth
+                .provider(&ClientConfig::default(), env(&[]))
+                .is_ok()
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
