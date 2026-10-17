@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
+use daily_digest::{Digest, DigestService};
 use gh::{GitHub, RateLimit};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,6 +29,8 @@ pub struct AppState {
     pub scoring: Scoring,
     /// See [`gh::TokenProvider::label`].
     pub auth: &'static str,
+    /// `None` unless `[digest] enabled`.
+    pub digest: Option<Arc<DigestService>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -37,6 +40,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/repos/{owner}/{name}", get(get_repo))
         .route("/api/runs", get(list_runs))
         .route("/api/events", get(list_events))
+        .route("/api/digest/preview", get(digest_preview))
+        .route("/api/digest/deliveries", get(digest_deliveries))
         .route("/api/refresh", post(refresh))
         .with_state(state)
 }
@@ -172,6 +177,7 @@ async fn get_repo(
         .alert_events(&EventFilter {
             repo: Some(repo.id),
             after_id: None,
+            oldest_first: false,
             since: None,
             limit: 100,
             // A repository's history starts with what was there when it was
@@ -229,6 +235,7 @@ async fn list_events(
     let filter = EventFilter {
         repo: None,
         after_id: None,
+        oldest_first: false,
         since: query.since,
         limit: query.limit.min(1000),
         include_baseline: query.include_baseline,
@@ -301,4 +308,50 @@ async fn refresh(State(state): State<AppState>) -> impl IntoResponse {
         StatusCode::ACCEPTED,
         Json(serde_json::json!({ "requested": true })),
     )
+}
+
+fn digest_disabled() -> Response {
+    let body = Json(serde_json::json!({ "error": "digest not enabled" }));
+    (StatusCode::NOT_FOUND, body).into_response()
+}
+
+#[derive(Deserialize)]
+struct PreviewQuery {
+    target: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Preview {
+    /// `None`: nothing new since the target's last digest.
+    digest: Option<Digest>,
+    headline: Option<String>,
+}
+
+/// What a target's next digest would contain, without sending anything.
+async fn digest_preview(
+    State(state): State<AppState>,
+    Query(query): Query<PreviewQuery>,
+) -> Result<Response, ApiError> {
+    let Some(digest) = &state.digest else {
+        return Ok(digest_disabled());
+    };
+    match digest.preview(query.target.as_deref(), Utc::now()).await {
+        Ok(digest) => Ok(Json(Preview {
+            headline: digest.as_ref().map(Digest::headline),
+            digest,
+        })
+        .into_response()),
+        Err(daily_digest::Error::UnknownTarget(name)) => {
+            let body = Json(serde_json::json!({ "error": format!("unknown target {name:?}") }));
+            Ok((StatusCode::NOT_FOUND, body).into_response())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+async fn digest_deliveries(State(state): State<AppState>) -> Result<Response, ApiError> {
+    if state.digest.is_none() {
+        return Ok(digest_disabled());
+    }
+    Ok(Json(state.store.list_deliveries(50).await?).into_response())
 }
