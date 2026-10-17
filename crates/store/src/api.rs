@@ -1,6 +1,7 @@
 //! Backend-independent domain types and the [`Store`] trait.
 
 use crate::alerts::*;
+use crate::deliveries::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -189,6 +190,15 @@ pub trait Store: Send + Sync {
     ) -> Result<()>;
 
     async fn source_statuses(&self, repo: RepoId) -> Result<Vec<RepoSource>>;
+
+    async fn record_delivery(&self, delivery: &DeliveryRecord) -> Result<()>;
+
+    /// The successful delivery with the highest `last_event_id` for
+    /// `target`: where that target's next digest starts.
+    async fn last_delivery(&self, target: &str) -> Result<Option<Delivery>>;
+
+    /// Most recent attempts first, across all targets.
+    async fn list_deliveries(&self, limit: u32) -> Result<Vec<Delivery>>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

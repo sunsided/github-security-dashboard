@@ -46,6 +46,20 @@ pub(crate) fn client(config: &OsvConfig) -> Option<OsvClient> {
     })
 }
 
+/// Percent-encodes everything but unreserved characters, so an advisory ID
+/// from OSV can't change the shape of the URL it's put into.
+fn path_segment(id: &str) -> String {
+    id.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
 /// Stable alert number for an advisory affecting a package, regardless of
 /// version: bumping to another affected version keeps the same alert.
 /// FNV-1a, truncated to 53 bits so it survives JSON in browsers.
@@ -177,7 +191,10 @@ impl Collector {
                             "{location} (severity: {})",
                             advisory.severity_basis
                         )),
-                        html_url: format!("https://osv.dev/vulnerability/{}", advisory.id),
+                        html_url: format!(
+                            "https://osv.dev/vulnerability/{}",
+                            path_segment(&advisory.id)
+                        ),
                         created_at: advisory.published.unwrap_or_else(Utc::now),
                         closed_at: None,
                         estimated: true,
@@ -295,6 +312,12 @@ mod tests {
                 "RUSTSEC-2026-0346"
             ]
         );
+    }
+
+    #[test]
+    fn advisory_ids_are_encoded_for_urls() {
+        check!(path_segment("GHSA-35jh-r3h4-6jhm") == "GHSA-35jh-r3h4-6jhm");
+        check!(path_segment("X|<!channel>") == "X%7C%3C%21channel%3E");
     }
 
     #[test]

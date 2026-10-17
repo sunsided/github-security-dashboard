@@ -29,6 +29,8 @@ pub struct Config {
     pub collector: CollectorConfig,
     #[serde(default)]
     pub scoring: Scoring,
+    #[serde(default)]
+    pub digest: daily_digest::DigestConfig,
 }
 
 /// Weights of open alerts per severity in a repository's risk score.
@@ -205,6 +207,7 @@ impl Config {
         if config.poll_interval < Duration::from_secs(60) {
             bail!("poll_interval must be at least one minute");
         }
+        config.digest.validate().map_err(|e| anyhow!(e))?;
         Ok(config)
     }
 }
@@ -230,6 +233,27 @@ mod tests {
         check!(config.auth.token_env == "GITHUB_TOKEN");
         check!(config.collector.page_size == 25);
         check!(config.scoring == Scoring::default());
+    }
+
+    #[test]
+    fn digest_settings_are_validated() {
+        let ok = Config::parse(
+            "[collector]\nowners = [\"a\"]\n[digest]\nenabled = true\nat = \"07:30\"\ntimezone = \"Europe/Berlin\"\n\
+             [[digest.targets]]\nname = \"s\"\nkind = \"slack\"\nurl_env = \"S\"",
+        )
+        .unwrap();
+        check!(ok.digest.at.to_string() == "07:30:00");
+        check!(ok.digest.timezone == chrono_tz::Europe::Berlin);
+
+        for broken in [
+            "[digest]\nenabled = true",
+            "[digest]\nat = \"8 am\"",
+            "[digest]\ntimezone = \"Mars/Olympus\"",
+            "[digest]\nenabled = true\n[[digest.targets]]\nname = \"x\"\nkind = \"carrier-pigeon\"\nurl_env = \"X\"",
+        ] {
+            let text = format!("[collector]\nowners = [\"a\"]\n{broken}");
+            check!(Config::parse(&text).is_err(), "{broken}");
+        }
     }
 
     #[test]

@@ -52,10 +52,50 @@
 	</ol>
 {/if}
 
+{#if data.deliveries}
+	<h2>Digest deliveries</h2>
+	{#if data.deliveries.length === 0}
+		<p class="muted">No digest has been due yet.</p>
+	{:else}
+		<ol class="runs">
+			{#each data.deliveries as delivery (delivery.id)}
+				<li>
+					<div class="row">
+						<span class="status {delivery.succeeded ? 'succeeded' : 'failed'}">
+							<span aria-hidden="true">{delivery.succeeded ? '✓' : '✕'}</span>
+							{delivery.succeeded ? (delivery.events > 0 ? 'sent' : 'quiet') : 'failed'}
+						</span>
+						<span>{delivery.target}</span>
+						<span>{formatDateTime(delivery.attempted_at)}</span>
+						<span class="muted tabular">
+							{delivery.events > 0
+								? `${formatCount(delivery.events)} event${delivery.events === 1 ? '' : 's'}`
+								: 'nothing new'}
+						</span>
+					</div>
+					{#if delivery.error}
+						<p class="error-line"><code>{delivery.error}</code></p>
+					{/if}
+				</li>
+			{/each}
+		</ol>
+	{/if}
+{/if}
+
 <style>
 	h1 {
 		margin: 0 0 1rem;
 		font-size: 1.4rem;
+	}
+
+	h2 {
+		margin: 2rem 0 0.75rem;
+		font-size: 1.1rem;
+	}
+
+	.error-line {
+		margin: 0.35rem 0 0;
+		color: var(--ink-secondary);
 	}
 
 	.muted {

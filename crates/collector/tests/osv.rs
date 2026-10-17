@@ -221,6 +221,8 @@ async fn external_repositories_get_estimated_alerts() {
     let events = store
         .alert_events(&EventFilter {
             repo: Some(repo.id),
+            after_id: None,
+            oldest_first: false,
             since: None,
             limit: 10,
             include_baseline: true,

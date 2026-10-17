@@ -56,6 +56,7 @@ pub(crate) use string_enum;
 
 mod alerts;
 mod api;
+mod deliveries;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 #[cfg(feature = "sqlite")]
@@ -65,6 +66,7 @@ use std::sync::Arc;
 
 pub use alerts::*;
 pub use api::*;
+pub use deliveries::*;
 
 /// Opens the backend matching `url` and applies pending migrations.
 ///

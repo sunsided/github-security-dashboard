@@ -64,6 +64,14 @@ tasks:
     cmds:
       - cargo run {{.PROFILE_FLAG}} --bin server -- --config {{.CONFIG}} --once
 
+  digest:send:
+    desc: Send the digest to all targets now, regardless of the schedule
+    preconditions:
+      - *cargo
+      - *config
+    cmds:
+      - cargo run {{.PROFILE_FLAG}} --bin server -- --config {{.CONFIG}} --send-digest
+
   build:
     desc: Build the workspace (PROFILE=release for optimized code)
     preconditions:

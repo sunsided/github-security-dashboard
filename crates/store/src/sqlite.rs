@@ -2,6 +2,7 @@
 
 use crate::alerts::{self, *};
 use crate::api::*;
+use crate::deliveries::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
@@ -165,6 +166,27 @@ fn alert_from_row(row: &SqliteRow) -> Result<Alert> {
         },
         first_seen_run: RunId(row.try_get("first_seen_run")?),
         last_seen_run: RunId(row.try_get("last_seen_run")?),
+    })
+}
+
+macro_rules! delivery_columns {
+    () => {
+        "id, target, attempted_at, first_event_id, last_event_id, events, succeeded, error"
+    };
+}
+
+fn delivery_from_row(row: &SqliteRow) -> Result<Delivery> {
+    Ok(Delivery {
+        id: row.try_get("id")?,
+        record: DeliveryRecord {
+            target: row.try_get("target")?,
+            attempted_at: row.try_get("attempted_at")?,
+            first_event_id: row.try_get("first_event_id")?,
+            last_event_id: row.try_get("last_event_id")?,
+            events: row.try_get("events")?,
+            succeeded: row.try_get("succeeded")?,
+            error: row.try_get("error")?,
+        },
     })
 }
 
@@ -470,19 +492,23 @@ impl Store for SqliteStore {
     async fn alert_events(&self, filter: &EventFilter) -> Result<Vec<AlertEvent>> {
         let rows = sqlx::query(
             "SELECT e.id, e.alert_id, e.run_id, e.at, e.kind, e.old, e.new, e.baseline,
-                    r.owner, r.name AS repo, a.source, a.number, a.title
+                    r.owner, r.name AS repo, a.source, a.number, a.title,
+                    a.severity, a.html_url
              FROM alert_events e
              JOIN alerts a ON a.id = e.alert_id
              JOIN repos r ON r.id = a.repo_id
              WHERE (?1 IS NULL OR a.repo_id = ?1) AND (?2 IS NULL OR e.at >= ?2)
                AND (?4 OR e.baseline = 0)
-             ORDER BY e.id DESC
+               AND (?5 IS NULL OR e.id > ?5)
+             ORDER BY CASE WHEN ?6 THEN e.id END ASC, e.id DESC
              LIMIT ?3",
         )
         .bind(filter.repo.map(|r| r.0))
         .bind(filter.since)
         .bind(i64::from(filter.limit))
         .bind(filter.include_baseline)
+        .bind(filter.after_id)
+        .bind(filter.oldest_first)
         .fetch_all(&self.pool)
         .await?;
 
@@ -502,6 +528,8 @@ impl Store for SqliteStore {
                     source: parse(row, "source")?,
                     number: row.try_get("number")?,
                     title: row.try_get("title")?,
+                    severity: parse(row, "severity")?,
+                    html_url: row.try_get("html_url")?,
                 })
             })
             .collect()
@@ -557,6 +585,49 @@ impl Store for SqliteStore {
                 })
             })
             .collect()
+    }
+
+    async fn record_delivery(&self, delivery: &DeliveryRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO digest_deliveries (target, attempted_at, first_event_id, last_event_id,
+                                           events, succeeded, error)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&delivery.target)
+        .bind(delivery.attempted_at)
+        .bind(delivery.first_event_id)
+        .bind(delivery.last_event_id)
+        .bind(delivery.events)
+        .bind(delivery.succeeded)
+        .bind(&delivery.error)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn last_delivery(&self, target: &str) -> Result<Option<Delivery>> {
+        let row = sqlx::query(concat!(
+            "SELECT ",
+            delivery_columns!(),
+            " FROM digest_deliveries WHERE target = ? AND succeeded = 1
+             ORDER BY last_event_id DESC, id DESC LIMIT 1"
+        ))
+        .bind(target)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(delivery_from_row).transpose()
+    }
+
+    async fn list_deliveries(&self, limit: u32) -> Result<Vec<Delivery>> {
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            delivery_columns!(),
+            " FROM digest_deliveries ORDER BY id DESC LIMIT ?"
+        ))
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(delivery_from_row).collect()
     }
 }
 

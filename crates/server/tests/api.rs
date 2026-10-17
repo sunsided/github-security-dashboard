@@ -97,6 +97,7 @@ async fn seeded_state() -> AppState {
         scheduler,
         scoring: Scoring::default(),
         auth: "personal access token",
+        digest: None,
     }
 }
 
@@ -296,4 +297,46 @@ async fn repositories_missing_from_the_latest_run_are_marked_and_left_out_of_tot
         .unwrap();
     let (_, summary) = call(state, "GET", "/api/summary").await;
     check!(summary["not_refreshed"] == 1);
+}
+
+#[tokio::test]
+async fn digest_endpoints_answer_404_when_disabled() {
+    let (status, body) = call(seeded_state().await, "GET", "/api/digest/preview").await;
+    check!(status == StatusCode::NOT_FOUND);
+    check!(body["error"] == "digest not enabled");
+}
+
+#[tokio::test]
+async fn digest_preview_shows_the_next_digest_without_sending() {
+    let mut state = seeded_state().await;
+    let config = daily_digest::DigestConfig {
+        enabled: true,
+        targets: vec![daily_digest::TargetConfig {
+            name: "slack".into(),
+            kind: daily_digest::TargetKind::Slack,
+            url_env: "SLACK".into(),
+        }],
+        ..daily_digest::DigestConfig::default()
+    };
+    // The URL is never contacted: previews don't send.
+    let service = daily_digest::DigestService::new(Arc::clone(&state.store), config, |_| {
+        Some("http://127.0.0.1:9/never".into())
+    })
+    .unwrap();
+    state.digest = Some(Arc::new(service));
+
+    let (status, body) = call(state.clone(), "GET", "/api/digest/preview").await;
+    check!(status == StatusCode::OK);
+    check!(body["headline"] == "2 new alerts (1 critical)");
+    check!(body["digest"]["new"][0]["repository"] == "acme/dusty");
+
+    let (status, _) = call(state.clone(), "GET", "/api/digest/preview?target=nope").await;
+    check!(status == StatusCode::NOT_FOUND);
+
+    let (status, deliveries) = call(state, "GET", "/api/digest/deliveries").await;
+    check!(status == StatusCode::OK);
+    check!(
+        deliveries.as_array().unwrap().is_empty(),
+        "a preview records nothing"
+    );
 }

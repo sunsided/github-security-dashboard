@@ -269,6 +269,8 @@ async fn tracks_alert_lifecycle_across_runs() {
     let events = store
         .alert_events(&EventFilter {
             repo: Some(api.id),
+            after_id: None,
+            oldest_first: false,
             since: None,
             limit: 10,
             include_baseline: true,

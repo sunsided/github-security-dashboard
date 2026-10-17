@@ -69,3 +69,38 @@ critical = 10
 high = 5
 medium = 2
 low = 1
+
+[digest]
+# A daily summary of what changed: alerts opened or reopened, severities
+# raised, alerts closed, and the current totals. Nothing is sent on days
+# without changes. Every request is a CloudEvent (binary mode: ce-* headers),
+# so Knative Eventing and other CloudEvents consumers can take it as-is.
+enabled = false
+at = "08:00"
+timezone = "Europe/Berlin"
+# Linked from the digest; omit if the dashboard isn't reachable for readers.
+# dashboard_url = "https://security.example.org"
+# CloudEvents attributes: ce-source, and the ce-type prefix (".digest.v1" for
+# JSON, ".digest.slack.v1" for Slack, ".digest.teams.v1" for Teams is appended).
+event_source = "/github-security-dashboard"
+event_type_prefix = "io.github.sunsided.security-dashboard"
+# Alerts listed per section before "...and N more".
+max_items = 15
+
+# Webhook URLs are secrets; each target names the variable that holds it.
+# [[digest.targets]]
+# name = "slack"
+# kind = "slack"            # Slack incoming webhook (Block Kit message)
+# url_env = "SLACK_WEBHOOK_URL"
+#
+# [[digest.targets]]
+# name = "teams"
+# kind = "teams"            # Teams Workflows webhook (Adaptive Card), from the
+#                           # template "Post to a channel when a webhook request
+#                           # is received"
+# url_env = "TEAMS_WEBHOOK_URL"
+#
+# [[digest.targets]]
+# name = "events"
+# kind = "json"             # any webhook, the digest as JSON
+# url_env = "DIGEST_WEBHOOK_URL"

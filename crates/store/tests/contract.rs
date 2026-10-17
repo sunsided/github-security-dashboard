@@ -7,8 +7,8 @@ use assert2::check;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::sync::Arc;
 use store::{
-    AlertFilter, AlertRecord, AlertSource, AlertState, EventFilter, EventKind, RepoFilter,
-    RepoInfo, RepoKind, RepoStats, RunStatus, Severity, SourceStatus, Store,
+    AlertFilter, AlertRecord, AlertSource, AlertState, DeliveryRecord, EventFilter, EventKind,
+    RepoFilter, RepoInfo, RepoKind, RepoStats, RunStatus, Severity, SourceStatus, Store,
 };
 
 fn t0() -> DateTime<Utc> {
@@ -317,6 +317,8 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
     let events = store
         .alert_events(&EventFilter {
             repo: Some(repo),
+            after_id: None,
+            oldest_first: false,
             since: None,
             limit: 10,
             include_baseline: false,
@@ -334,12 +336,19 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
             ]
     );
     check!(events[1].old.as_deref() == Some("high"));
+    check!(
+        events[3].severity == Severity::Critical,
+        "events carry the alert's current severity"
+    );
+    check!(events[3].html_url.ends_with("/security/dependabot/1"));
     check!(events[1].new.as_deref() == Some("critical"));
     check!((events[0].owner.as_str(), events[0].repo.as_str()) == ("acme", "widget"));
 
     let recent = store
         .alert_events(&EventFilter {
             repo: None,
+            after_id: None,
+            oldest_first: false,
             since: Some(t0() + Duration::minutes(90)),
             limit: 10,
             include_baseline: false,
@@ -494,6 +503,8 @@ pub async fn baseline_events_are_filtered_on_request(store: Arc<dyn Store>) {
     let news = store
         .alert_events(&EventFilter {
             repo: None,
+            after_id: None,
+            oldest_first: false,
             since: None,
             limit: 10,
             include_baseline: false,
@@ -507,6 +518,8 @@ pub async fn baseline_events_are_filtered_on_request(store: Arc<dyn Store>) {
     let all = store
         .alert_events(&EventFilter {
             repo: Some(repo),
+            after_id: None,
+            oldest_first: false,
             since: None,
             limit: 10,
             include_baseline: true,
@@ -557,118 +570,155 @@ pub async fn first_collected_run_survives_failures(store: Arc<dyn Store>) {
     check!(first(store.source_statuses(id).await.unwrap()) == Some(run2));
 }
 
+pub async fn deliveries_track_a_watermark_per_target(store: Arc<dyn Store>) {
+    let delivery = |target: &str, last: i64, succeeded: bool| DeliveryRecord {
+        target: target.into(),
+        attempted_at: t0() + Duration::hours(last),
+        first_event_id: 1,
+        last_event_id: last,
+        events: last,
+        succeeded,
+        error: (!succeeded).then(|| "503".to_owned()),
+    };
+    check!(store.last_delivery("slack").await.unwrap() == None);
+
+    store
+        .record_delivery(&delivery("slack", 5, true))
+        .await
+        .unwrap();
+    store
+        .record_delivery(&delivery("slack", 9, false))
+        .await
+        .unwrap();
+    store
+        .record_delivery(&delivery("hook", 7, true))
+        .await
+        .unwrap();
+
+    let slack = store.last_delivery("slack").await.unwrap().unwrap();
+    check!(
+        slack.record.last_event_id == 5,
+        "failed attempts don't move the watermark"
+    );
+    check!(
+        store
+            .last_delivery("hook")
+            .await
+            .unwrap()
+            .unwrap()
+            .record
+            .last_event_id
+            == 7
+    );
+
+    let all = store.list_deliveries(10).await.unwrap();
+    check!(all.len() == 3);
+    check!(all[0].record.target == "hook", "most recent first");
+    check!(all[1].record.error.as_deref() == Some("503"));
+    check!(all[1].record.attempted_at == t0() + Duration::hours(9));
+}
+
+pub async fn events_can_be_read_after_an_id(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let repo = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run)
+        .await
+        .unwrap();
+    for number in 1..=3 {
+        store
+            .record_alerts(
+                repo,
+                run,
+                t0(),
+                &[alert(number, AlertState::Open, Severity::Low)],
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    let all = store
+        .alert_events(&EventFilter {
+            limit: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    check!(all.len() == 3);
+    let after = store
+        .alert_events(&EventFilter {
+            after_id: Some(all[2].id),
+            limit: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    check!(after.iter().map(|e| e.number).collect::<Vec<_>>() == [3, 2]);
+
+    // Capped and oldest first: the events right after the watermark.
+    let next = store
+        .alert_events(&EventFilter {
+            after_id: Some(all[2].id),
+            limit: 1,
+            oldest_first: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    check!(next.iter().map(|e| e.number).collect::<Vec<_>>() == [2]);
+}
+
 /// Instantiates every contract check for one backend. `$open` receives the
-/// test's name, so backends can give each test its own database.
+/// test's name, so backends can give each test its own database, and
+/// returns `None` to skip (a backend without a database to test against).
 macro_rules! contract_tests {
     ($backend:ident, $open:path) => {
+        contract_tests!(@tests $backend, $open, runs_round_trip, upsert_is_keyed_case_insensitively, overview_carries_latest_snapshot, repo_without_snapshot_has_no_latest, snapshots_are_append_only, list_filters, alert_lifecycle_is_audited, alerts_are_scoped_by_repo_and_source, source_status_is_upserted, baseline_events_are_filtered_on_request, first_collected_run_survives_failures, deliveries_track_a_watermark_per_target, events_can_be_read_after_an_id);
+    };
+    (@tests $backend:ident, $open:path, $($test:ident),+) => {
         mod $backend {
             use super::*;
-
-            #[tokio::test]
-            async fn runs_round_trip() {
-                super::runs_round_trip($open(stringify!(runs_round_trip)).await).await
-            }
-
-            #[tokio::test]
-            async fn upsert_is_keyed_case_insensitively() {
-                super::upsert_is_keyed_case_insensitively(
-                    $open(stringify!(upsert_is_keyed_case_insensitively)).await,
-                )
-                .await
-            }
-
-            #[tokio::test]
-            async fn overview_carries_latest_snapshot() {
-                super::overview_carries_latest_snapshot(
-                    $open(stringify!(overview_carries_latest_snapshot)).await,
-                )
-                .await
-            }
-
-            #[tokio::test]
-            async fn repo_without_snapshot_has_no_latest() {
-                super::repo_without_snapshot_has_no_latest(
-                    $open(stringify!(repo_without_snapshot_has_no_latest)).await,
-                )
-                .await
-            }
-
-            #[tokio::test]
-            async fn snapshots_are_append_only() {
-                super::snapshots_are_append_only($open(stringify!(snapshots_are_append_only)).await)
-                    .await
-            }
-
-            #[tokio::test]
-            async fn list_filters() {
-                super::list_filters($open(stringify!(list_filters)).await).await
-            }
-
-            #[tokio::test]
-            async fn alert_lifecycle_is_audited() {
-                super::alert_lifecycle_is_audited(
-                    $open(stringify!(alert_lifecycle_is_audited)).await,
-                )
-                .await
-            }
-
-            #[tokio::test]
-            async fn alerts_are_scoped_by_repo_and_source() {
-                super::alerts_are_scoped_by_repo_and_source(
-                    $open(stringify!(alerts_are_scoped_by_repo_and_source)).await,
-                )
-                .await
-            }
-
-            #[tokio::test]
-            async fn source_status_is_upserted() {
-                super::source_status_is_upserted($open(stringify!(source_status_is_upserted)).await)
-                    .await
-            }
-
-            #[tokio::test]
-            async fn baseline_events_are_filtered_on_request() {
-                super::baseline_events_are_filtered_on_request(
-                    $open(stringify!(baseline_events_are_filtered_on_request)).await,
-                )
-                .await
-            }
-
-            #[tokio::test]
-            async fn first_collected_run_survives_failures() {
-                super::first_collected_run_survives_failures(
-                    $open(stringify!(first_collected_run_survives_failures)).await,
-                )
-                .await
-            }
+            $(
+                #[tokio::test]
+                async fn $test() {
+                    let Some(store) = $open(stringify!($test)).await else {
+                        return;
+                    };
+                    super::$test(store).await
+                }
+            )+
         }
     };
 }
 
 #[cfg(feature = "sqlite")]
-async fn open_sqlite(_test: &str) -> Arc<dyn Store> {
-    store::connect("sqlite::memory:").await.unwrap()
+async fn open_sqlite(_test: &str) -> Option<Arc<dyn Store>> {
+    Some(store::connect("sqlite::memory:").await.unwrap())
 }
 
 #[cfg(feature = "sqlite")]
 contract_tests!(sqlite, open_sqlite);
 
 /// PostgreSQL connection for the contract tests, from `DATABASE_URL_PG`
-/// (`task test:postgres` sets it).
+/// (`task test:postgres` sets it). Without it the PostgreSQL tests are
+/// skipped: the server enables the `postgres` feature by default, so a
+/// plain `cargo test --workspace` builds them too.
 #[cfg(feature = "postgres")]
-fn postgres_url() -> String {
-    std::env::var("DATABASE_URL_PG").expect(
-        "DATABASE_URL_PG must point at a PostgreSQL database for the postgres contract tests; \
-         start one with `task db:up` and run `task test:postgres`",
-    )
+fn postgres_url() -> Option<String> {
+    let url = std::env::var("DATABASE_URL_PG")
+        .ok()
+        .filter(|u| !u.is_empty());
+    if url.is_none() {
+        eprintln!("skipped: DATABASE_URL_PG is not set (task db:up && task test:postgres)");
+    }
+    url
 }
 
 /// Each test gets a fresh schema of its own, recreated on every run.
 #[cfg(feature = "postgres")]
-async fn postgres_schema(test: &str) -> String {
+async fn postgres_schema(test: &str) -> Option<String> {
     use sqlx::Connection;
 
-    let url = postgres_url();
+    let url = postgres_url()?;
     let schema = format!("contract_{test}");
     // Test function names are plain identifiers; anything else is a bug here.
     assert2::assert!(
@@ -689,12 +739,16 @@ async fn postgres_schema(test: &str) -> String {
     }
     admin.close().await.unwrap();
     let separator = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{separator}options=-c%20search_path%3D{schema}")
+    Some(format!(
+        "{url}{separator}options=-c%20search_path%3D{schema}"
+    ))
 }
 
 #[cfg(feature = "postgres")]
-async fn open_postgres(test: &str) -> Arc<dyn Store> {
-    store::connect(&postgres_schema(test).await).await.unwrap()
+async fn open_postgres(test: &str) -> Option<Arc<dyn Store>> {
+    let url = postgres_schema(test).await?;
+    // Configured but unreachable is a failure, not a skip.
+    Some(store::connect(&url).await.unwrap())
 }
 
 #[cfg(feature = "postgres")]
@@ -703,7 +757,9 @@ contract_tests!(postgres, open_postgres);
 #[cfg(feature = "postgres")]
 #[tokio::test]
 async fn postgres_audit_tables_reject_changes() {
-    let url = postgres_schema("audit_triggers").await;
+    let Some(url) = postgres_schema("audit_triggers").await else {
+        return;
+    };
     let store = store::connect(&url).await.unwrap();
     let run = store.begin_run(t0()).await.unwrap();
     let id = store

@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use collector::Collector;
+use daily_digest::DigestService;
 use gh::{ClientConfig, GitHub};
 use server::api::AppState;
 use server::config::Config;
@@ -19,6 +20,12 @@ struct Args {
     /// Run the collector once and exit instead of serving.
     #[arg(long)]
     once: bool,
+
+    /// Send the digest to all targets now, regardless of the schedule, and
+    /// exit. Needs [digest] enabled; covers events since each target's
+    /// last digest.
+    #[arg(long, conflicts_with = "once")]
+    send_digest: bool,
 }
 
 #[tokio::main]
@@ -36,6 +43,23 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("opening storage")?;
     let client_config = ClientConfig::default();
+    let digest = if config.digest.enabled {
+        let service = DigestService::new(Arc::clone(&store), config.digest.clone(), |name| {
+            std::env::var(name).ok()
+        })
+        .map_err(|e| anyhow::anyhow!(e))?;
+        Some(Arc::new(service))
+    } else {
+        None
+    };
+
+    if args.send_digest {
+        let digest = digest.context("--send-digest needs [digest] enabled = true")?;
+        let outcomes = digest.send_now(chrono::Utc::now()).await;
+        println!("{}", serde_json::to_string_pretty(&outcomes)?);
+        return Ok(());
+    }
+
     let tokens = config
         .auth
         .provider(&client_config, |name| std::env::var(name).ok())?;
@@ -55,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
 
     let scheduler = Arc::new(Scheduler::new(collector, config.poll_interval));
     tokio::spawn(Arc::clone(&scheduler).run_forever());
+    if let Some(digest) = &digest {
+        tokio::spawn(Arc::clone(digest).run_forever());
+    }
 
     let allowed_hosts = server::guard::AllowedHosts::new(&config.allowed_hosts);
     let app = server::app(
@@ -64,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
             scheduler,
             scoring: config.scoring,
             auth,
+            digest,
         },
         allowed_hosts,
     );
