@@ -34,7 +34,7 @@ impl AllowedHosts {
             return false;
         };
         let name = strip_port(host).to_ascii_lowercase();
-        self.0.iter().any(|allowed| *allowed == name)
+        self.0.contains(&name)
     }
 }
 
