@@ -477,3 +477,29 @@ async fn not_found_outside_the_owner_still_fails() {
         .unwrap_err();
     check!(let Error::GraphQl(_) = err);
 }
+
+#[tokio::test]
+async fn dependency_purls_from_sbom() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/cargo/dependency-graph/sbom"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sbom": { "packages": [
+            { "name": "cargo", "externalRefs": [] },
+            { "name": "digest", "externalRefs": [
+                { "referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:cargo/digest@0.10.7" },
+                { "referenceCategory": "SECURITY", "referenceType": "cpe23Type", "referenceLocator": "cpe:2.3:a:digest" }
+            ]},
+            { "name": "digest", "externalRefs": [
+                { "referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:cargo/digest@0.10.7" }
+            ]},
+            { "name": "no-refs" }
+        ]}})))
+        .mount(&server)
+        .await;
+
+    let purls = client(&server)
+        .dependency_purls("rust-lang", "cargo")
+        .await
+        .unwrap();
+    check!(purls == ["pkg:cargo/digest@0.10.7"]);
+}

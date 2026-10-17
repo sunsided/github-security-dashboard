@@ -10,6 +10,7 @@ mod auth;
 mod client;
 mod link;
 mod repos;
+mod sbom;
 
 pub use alerts::{AlertKind, AlertSeverity, AlertStatus, SecurityAlert};
 pub use app::AppProvider;
