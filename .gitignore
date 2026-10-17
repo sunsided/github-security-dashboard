@@ -12,6 +12,8 @@
 # Local config, secrets and data
 /config.toml
 *.pem
+# Throwaway key pair for the GitHub App auth tests; grants access to nothing.
+!/crates/gh/tests/fixtures/*.pem
 *.db
 *.db-shm
 *.db-wal
