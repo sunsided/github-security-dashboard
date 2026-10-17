@@ -301,6 +301,8 @@ impl Collector {
             created_at: alert.created_at,
             closed_at: alert.closed_at,
             estimated: false,
+            advisory_ids: alert.advisory_ids.clone(),
+            ecosystem: alert.ecosystem.as_deref().map(store::ecosystem_name),
         }
     }
 }

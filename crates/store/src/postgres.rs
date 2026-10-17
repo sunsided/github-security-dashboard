@@ -67,7 +67,7 @@ macro_rules! alert_columns {
     () => {
         "
     id, repo_id, source, number, state, severity, title, location, html_url,
-    created_at, closed_at, estimated, first_seen_run, last_seen_run"
+    created_at, closed_at, estimated, first_seen_run, last_seen_run, advisory_ids, ecosystem"
     };
 }
 
@@ -143,6 +143,8 @@ fn alert_from_row(row: &PgRow) -> Result<Alert> {
             created_at: row.try_get("created_at")?,
             closed_at: row.try_get("closed_at")?,
             estimated: row.try_get("estimated")?,
+            advisory_ids: row.try_get::<Json<Vec<String>>, _>("advisory_ids")?.0,
+            ecosystem: row.try_get("ecosystem")?,
         },
         first_seen_run: RunId(row.try_get("first_seen_run")?),
         last_seen_run: RunId(row.try_get("last_seen_run")?),
@@ -399,8 +401,8 @@ impl Store for PostgresStore {
             let id: i64 = sqlx::query_scalar(
                 "INSERT INTO alerts (repo_id, source, number, state, severity, title, location,
                                      html_url, created_at, closed_at, estimated,
-                                     first_seen_run, last_seen_run)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+                                     first_seen_run, last_seen_run, advisory_ids, ecosystem)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14)
                  ON CONFLICT (repo_id, source, number) DO UPDATE SET
                      state = excluded.state,
                      severity = excluded.severity,
@@ -410,7 +412,9 @@ impl Store for PostgresStore {
                      created_at = excluded.created_at,
                      closed_at = excluded.closed_at,
                      estimated = excluded.estimated,
-                     last_seen_run = excluded.last_seen_run
+                     last_seen_run = excluded.last_seen_run,
+                     advisory_ids = excluded.advisory_ids,
+                     ecosystem = excluded.ecosystem
                  RETURNING id",
             )
             .bind(repo.0)
@@ -425,6 +429,8 @@ impl Store for PostgresStore {
             .bind(alert.closed_at)
             .bind(alert.estimated)
             .bind(run.0)
+            .bind(Json(&alert.advisory_ids))
+            .bind(&alert.ecosystem)
             .fetch_one(&mut *tx)
             .await?;
 
@@ -448,6 +454,31 @@ impl Store for PostgresStore {
 
         tx.commit().await?;
         Ok(events)
+    }
+
+    async fn list_open_alerts(&self) -> Result<Vec<OpenAlert>> {
+        let rows = sqlx::query(
+            "SELECT a.id, a.repo_id, a.source, a.number, a.state, a.severity, a.title,
+                    a.location, a.html_url, a.created_at, a.closed_at, a.estimated,
+                    a.first_seen_run, a.last_seen_run, a.advisory_ids, a.ecosystem,
+                    r.owner, r.name AS repo, r.archived, r.last_seen_run AS repo_last_seen_run
+             FROM alerts a JOIN repos r ON r.id = a.repo_id
+             WHERE a.state = 'open'
+             ORDER BY a.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(OpenAlert {
+                    owner: row.try_get("owner")?,
+                    repo: row.try_get("repo")?,
+                    archived: row.try_get("archived")?,
+                    repo_last_seen_run: RunId(row.try_get("repo_last_seen_run")?),
+                    alert: alert_from_row(row)?,
+                })
+            })
+            .collect()
     }
 
     async fn list_alerts(&self, repo: RepoId, filter: &AlertFilter) -> Result<Vec<Alert>> {

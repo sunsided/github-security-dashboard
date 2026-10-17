@@ -40,6 +40,8 @@ fn alert(number: i64, severity: Severity) -> AlertRecord {
         created_at: Utc::now(),
         closed_at: None,
         estimated: false,
+        advisory_ids: Vec::new(),
+        ecosystem: None,
     }
 }
 

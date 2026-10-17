@@ -3,6 +3,7 @@
 pub mod api;
 pub mod config;
 pub mod guard;
+pub mod insights;
 pub mod realtime;
 pub mod scheduler;
 mod ui;

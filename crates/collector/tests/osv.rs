@@ -188,6 +188,8 @@ async fn external_repositories_get_estimated_alerts() {
     );
     check!(alert.title == "GHSA-test-0001: Prototype pollution in lodash");
     check!(alert.html_url == "https://osv.dev/vulnerability/GHSA-test-0001");
+    check!(alert.advisory_ids == ["GHSA-test-0001"]);
+    check!(alert.ecosystem.as_deref() == Some("npm"));
     check!(let Some(location) = &alert.location && location.contains("4.17.20") && location.contains("4.17.19"));
 
     let statuses = store.source_statuses(repo.id).await.unwrap();

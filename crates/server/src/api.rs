@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/repos/{owner}/{name}", get(get_repo))
         .route("/api/runs", get(list_runs))
         .route("/api/events", get(list_events))
+        .route("/api/insights", get(insights))
         .route("/api/digest/preview", get(digest_preview))
         .route("/api/digest/deliveries", get(digest_deliveries))
         .route("/api/realtime/token", post(realtime::token))
@@ -364,4 +365,15 @@ async fn digest_deliveries(State(state): State<AppState>) -> Result<Response, Ap
         return Ok(digest_disabled());
     }
     Ok(Json(state.store.list_deliveries(50).await?).into_response())
+}
+
+/// Where open alerts concentrate, over the same repositories as the totals:
+/// not archived, and seen in the latest run.
+async fn insights(State(state): State<AppState>) -> ApiResult<crate::insights::Insights> {
+    let ctx = ViewContext::load(&state).await?;
+    let alerts = state.store.list_open_alerts().await?;
+    let latest = ctx.latest_run;
+    Ok(Json(crate::insights::compute(&alerts, ctx.now, |a| {
+        !a.archived && latest.is_none_or(|run| a.repo_last_seen_run.0 >= run.0)
+    })))
 }

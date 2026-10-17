@@ -54,6 +54,8 @@ async fn seeded_state() -> AppState {
                 created_at: now,
                 closed_at: None,
                 estimated: false,
+                advisory_ids: Vec::new(),
+                ecosystem: None,
             };
             store
                 .record_alerts(
@@ -348,4 +350,15 @@ async fn digest_preview_shows_the_next_digest_without_sending() {
         deliveries.as_array().unwrap().is_empty(),
         "a preview records nothing"
     );
+}
+
+#[tokio::test]
+async fn insights_summarize_open_alerts() {
+    let (status, body) = call(seeded_state().await, "GET", "/api/insights").await;
+    check!(status == StatusCode::OK);
+    check!(body["by_source"][0]["key"] == "dependabot");
+    check!(body["by_source"][0]["total"] == 2);
+    check!(body["by_age"].as_array().unwrap().len() == 4);
+    // Both seeded alerts are in one repository: nothing is widespread.
+    check!(body["widespread"].as_array().unwrap().is_empty());
 }

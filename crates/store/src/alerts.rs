@@ -86,6 +86,37 @@ pub struct AlertRecord {
     pub closed_at: Option<DateTime<Utc>>,
     /// Derived from a dependency scan rather than read from GitHub.
     pub estimated: bool,
+    /// What the alert is an instance of: advisory IDs and aliases (GHSA,
+    /// CVE, RUSTSEC) for dependency alerts, the rule ID for code scanning,
+    /// the secret type for secret scanning.
+    pub advisory_ids: Vec<String>,
+    /// Package ecosystem of dependency alerts, see [`ecosystem_name`].
+    pub ecosystem: Option<String>,
+}
+
+/// One name per package ecosystem, whether it came from GitHub (`rust`,
+/// `pip`, `go`) or from a package URL (`cargo`, `pypi`, `golang`).
+pub fn ecosystem_name(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "rust" | "cargo" | "crates.io" => "cargo".into(),
+        "pip" | "pypi" => "pip".into(),
+        "go" | "golang" => "go".into(),
+        "rubygems" | "gem" => "rubygems".into(),
+        "actions" | "github-actions" | "githubactions" => "actions".into(),
+        other => other.to_owned(),
+    }
+}
+
+/// An open alert together with the repository it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenAlert {
+    pub owner: String,
+    pub repo: String,
+    pub archived: bool,
+    /// See [`crate::RepoOverview::last_seen_run`].
+    pub repo_last_seen_run: RunId,
+    #[serde(flatten)]
+    pub alert: Alert,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,6 +276,8 @@ mod tests {
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             closed_at: None,
             estimated: false,
+            advisory_ids: Vec::new(),
+            ecosystem: None,
         }
     }
 
@@ -299,6 +332,17 @@ mod tests {
                 == [EventKind::Reopened, EventKind::SeverityChanged]
         );
         check!(kinds(changes(Some(&alert(Open, Low)), &alert(Fixed, High))) == [EventKind::Fixed]);
+    }
+
+    #[test]
+    fn ecosystems_get_one_name_each() {
+        check!(ecosystem_name("rust") == "cargo");
+        check!(ecosystem_name("cargo") == "cargo");
+        check!(ecosystem_name("pypi") == "pip");
+        check!(ecosystem_name("PIP") == "pip");
+        check!(ecosystem_name("golang") == "go");
+        check!(ecosystem_name("gem") == "rubygems");
+        check!(ecosystem_name("npm") == "npm");
     }
 
     #[test]

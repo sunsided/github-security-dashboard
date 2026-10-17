@@ -198,6 +198,11 @@ impl Collector {
                         created_at: advisory.published.unwrap_or_else(Utc::now),
                         closed_at: None,
                         estimated: true,
+                        advisory_ids: std::iter::once(advisory.id.clone())
+                            .chain(advisory.aliases.iter().cloned())
+                            .collect(),
+                        // The package URL's type, e.g. "npm" in npm/lodash.
+                        ecosystem: dep.package.split('/').next().map(store::ecosystem_name),
                     });
                 }
             }

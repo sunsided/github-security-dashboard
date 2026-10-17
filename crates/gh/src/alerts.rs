@@ -67,6 +67,13 @@ pub struct SecurityAlert {
     pub html_url: String,
     pub created_at: DateTime<Utc>,
     pub closed_at: Option<DateTime<Utc>>,
+    /// What the alert is an instance of: advisory IDs (GHSA, CVE) for
+    /// Dependabot, the rule ID for code scanning, the secret type for
+    /// secret scanning.
+    pub advisory_ids: Vec<String>,
+    /// Package ecosystem as GitHub names it (`npm`, `pip`, `rust`, ...);
+    /// Dependabot only.
+    pub ecosystem: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -110,6 +117,8 @@ struct Package {
 struct Advisory {
     summary: String,
     severity: String,
+    ghsa_id: Option<String>,
+    cve_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +187,17 @@ fn repo_of(repository: Option<RepoRef>, owner: &str, repo: &str) -> (String, Str
 impl DependabotAlert {
     fn flatten(self, owner: &str, repo: &str) -> SecurityAlert {
         let (owner, repo) = repo_of(self.repository, owner, repo);
+        let ecosystem = self
+            .dependency
+            .package
+            .as_ref()
+            .map(|p| p.ecosystem.clone());
+        let advisory = self.security_advisory;
+        let advisory_ids = advisory
+            .ghsa_id
+            .into_iter()
+            .chain(advisory.cve_id)
+            .collect();
         let location = match (self.dependency.package, self.dependency.manifest_path) {
             (Some(p), Some(m)) => Some(format!("{}/{} ({m})", p.ecosystem, p.name)),
             (Some(p), None) => Some(format!("{}/{}", p.ecosystem, p.name)),
@@ -193,8 +213,8 @@ impl DependabotAlert {
                 "fixed" => AlertStatus::Fixed,
                 _ => AlertStatus::Dismissed,
             },
-            severity: severity(&self.security_advisory.severity),
-            title: self.security_advisory.summary,
+            severity: severity(&advisory.severity),
+            title: advisory.summary,
             location,
             html_url: self.html_url,
             created_at: self.created_at,
@@ -202,6 +222,8 @@ impl DependabotAlert {
                 .fixed_at
                 .or(self.dismissed_at)
                 .or(self.auto_dismissed_at),
+            advisory_ids,
+            ecosystem,
         }
     }
 }
@@ -241,6 +263,7 @@ impl CodeScanningAlert {
                 .or(rule.name)
                 .or(rule.id.clone())
                 .unwrap_or_else(|| "code scanning alert".into()),
+            advisory_ids: rule.id.clone().into_iter().collect(),
             location: match (rule.id, path) {
                 (Some(id), Some(path)) => Some(format!("{id} in {path}")),
                 (id, path) => id.or(path),
@@ -248,6 +271,7 @@ impl CodeScanningAlert {
             html_url: self.html_url,
             created_at: self.created_at,
             closed_at: self.fixed_at.or(self.dismissed_at),
+            ecosystem: None,
         }
     }
 }
@@ -270,10 +294,12 @@ impl SecretScanningAlert {
                 .secret_type_display_name
                 .or(self.secret_type.clone())
                 .unwrap_or_else(|| "secret".into()),
+            advisory_ids: self.secret_type.clone().into_iter().collect(),
             location: self.secret_type,
             html_url: self.html_url,
             created_at: self.created_at,
             closed_at: self.resolved_at,
+            ecosystem: None,
         }
     }
 }
@@ -389,7 +415,8 @@ mod tests {
                 "created_at": "2026-01-01T00:00:00Z", "fixed_at": null, "dismissed_at": null,
                 "auto_dismissed_at": "2026-02-01T00:00:00Z",
                 "dependency": { "package": { "ecosystem": "npm", "name": "vite" }, "manifest_path": "web/yarn.lock" },
-                "security_advisory": { "summary": "Path traversal", "severity": "moderate" }
+                "security_advisory": { "summary": "Path traversal", "severity": "moderate",
+                                       "ghsa_id": "GHSA-aaaa-bbbb-cccc", "cve_id": "CVE-2026-1234" }
             }),
             "me",
             "repo",
@@ -399,6 +426,8 @@ mod tests {
         check!(a.status == AlertStatus::Dismissed);
         check!(a.severity == Some(AlertSeverity::Medium));
         check!(a.location.as_deref() == Some("npm/vite (web/yarn.lock)"));
+        check!(a.advisory_ids == ["GHSA-aaaa-bbbb-cccc", "CVE-2026-1234"]);
+        check!(a.ecosystem.as_deref() == Some("npm"));
         check!(a.closed_at.is_some());
     }
 
@@ -425,6 +454,8 @@ mod tests {
         check!(security.severity == Some(AlertSeverity::High));
         check!(security.repo == "api", "org endpoints name the repository");
         check!(security.location.as_deref() == Some("js/xss in src/main.rs"));
+        check!(security.advisory_ids == ["js/xss"]);
+        check!(security.ecosystem == None);
 
         let quality =
             alert(json!({ "id": "x", "severity": "warning", "security_severity_level": null }));
@@ -452,6 +483,7 @@ mod tests {
         check!(open.status == AlertStatus::Open);
         check!(open.severity == None);
         check!(open.title == "GitHub Personal Access Token");
+        check!(open.advisory_ids == ["github_personal_access_token"]);
         check!(!format!("{open:?}").contains("ghp_must_never_be_kept"));
         check!(alert("resolved", Some("revoked")).status == AlertStatus::Fixed);
         check!(alert("resolved", Some("false_positive")).status == AlertStatus::Dismissed);

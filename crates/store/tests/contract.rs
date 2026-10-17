@@ -226,6 +226,8 @@ fn alert(number: i64, state: AlertState, severity: Severity) -> AlertRecord {
         created_at: t0() - Duration::days(1),
         closed_at: None,
         estimated: false,
+        advisory_ids: Vec::new(),
+        ecosystem: None,
     }
 }
 
@@ -667,12 +669,72 @@ pub async fn events_can_be_read_after_an_id(store: Arc<dyn Store>) {
     check!(next.iter().map(|e| e.number).collect::<Vec<_>>() == [2]);
 }
 
+pub async fn open_alerts_carry_identity_and_repository(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let api = store
+        .upsert_repo(&repo("acme", "api", RepoKind::Org), run)
+        .await
+        .unwrap();
+    let mut archived = repo("acme", "old", RepoKind::Org);
+    archived.archived = true;
+    let old = store.upsert_repo(&archived, run).await.unwrap();
+
+    let mut lodash = alert(1, AlertState::Open, Severity::High);
+    lodash.advisory_ids = vec!["GHSA-35jh-r3h4-6jhm".into(), "CVE-2021-23337".into()];
+    lodash.ecosystem = Some("npm".into());
+    store
+        .record_alerts(
+            api,
+            run,
+            t0(),
+            &[lodash, alert(2, AlertState::Fixed, Severity::Low)],
+            false,
+        )
+        .await
+        .unwrap();
+    store
+        .record_alerts(
+            old,
+            run,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::Medium)],
+            false,
+        )
+        .await
+        .unwrap();
+
+    let open = store.list_open_alerts().await.unwrap();
+    check!(open.len() == 2, "closed alerts are left out");
+    let first = open.iter().find(|a| a.repo == "api").unwrap();
+    check!(first.owner == "acme");
+    check!(!first.archived);
+    check!(first.repo_last_seen_run == run);
+    check!(first.alert.record.advisory_ids == ["GHSA-35jh-r3h4-6jhm", "CVE-2021-23337"]);
+    check!(first.alert.record.ecosystem.as_deref() == Some("npm"));
+    check!(open.iter().any(|a| a.repo == "old" && a.archived));
+
+    // Identity is refreshed like any other field.
+    let mut updated = alert(1, AlertState::Open, Severity::High);
+    updated.advisory_ids = vec!["GHSA-35jh-r3h4-6jhm".into()];
+    store
+        .record_alerts(api, run, t0(), &[updated], false)
+        .await
+        .unwrap();
+    let alerts = store
+        .list_alerts(api, &AlertFilter::default())
+        .await
+        .unwrap();
+    let refreshed = alerts.iter().find(|a| a.record.number == 1).unwrap();
+    check!(refreshed.record.advisory_ids == ["GHSA-35jh-r3h4-6jhm"]);
+    check!(refreshed.record.ecosystem == None);
+}
+
 /// Instantiates every contract check for one backend. `$open` receives the
 /// test's name, so backends can give each test its own database, and
 /// returns `None` to skip (a backend without a database to test against).
 macro_rules! contract_tests {
     ($backend:ident, $open:path) => {
-        contract_tests!(@tests $backend, $open, runs_round_trip, upsert_is_keyed_case_insensitively, overview_carries_latest_snapshot, repo_without_snapshot_has_no_latest, snapshots_are_append_only, list_filters, alert_lifecycle_is_audited, alerts_are_scoped_by_repo_and_source, source_status_is_upserted, baseline_events_are_filtered_on_request, first_collected_run_survives_failures, deliveries_track_a_watermark_per_target, events_can_be_read_after_an_id);
+        contract_tests!(@tests $backend, $open, open_alerts_carry_identity_and_repository, runs_round_trip, upsert_is_keyed_case_insensitively, overview_carries_latest_snapshot, repo_without_snapshot_has_no_latest, snapshots_are_append_only, list_filters, alert_lifecycle_is_audited, alerts_are_scoped_by_repo_and_source, source_status_is_upserted, baseline_events_are_filtered_on_request, first_collected_run_survives_failures, deliveries_track_a_watermark_per_target, events_can_be_read_after_an_id);
     };
     (@tests $backend:ident, $open:path, $($test:ident),+) => {
         mod $backend {
