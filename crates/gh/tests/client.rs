@@ -372,3 +372,50 @@ async fn disabled_feature_is_inaccessible() {
     check!(err.is_inaccessible());
     check!(err.to_string().contains("not enabled"));
 }
+
+#[tokio::test]
+async fn repositories_the_token_cannot_read_are_skipped() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "repositoryOwner": { "repositories": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [repo_node("visible", Some(3)), null]
+            }}},
+            "errors": [{
+                "type": "FORBIDDEN",
+                "message": "Resource not accessible by integration",
+                "path": ["repositoryOwner", "repositories", "nodes", 1]
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let repos = client(&server)
+        .owner_repositories("acme", 25)
+        .await
+        .unwrap();
+    check!(repos.len() == 1);
+    check!(repos[0].name == "visible");
+}
+
+#[tokio::test]
+async fn errors_outside_the_repository_list_still_fail() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": null,
+            "errors": [{ "type": "FORBIDDEN", "message": "Resource not accessible by integration",
+                         "path": ["repositoryOwner"] }]
+        })))
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .owner_repositories("acme", 25)
+        .await
+        .unwrap_err();
+    check!(let Error::GraphQl(messages) = &err && messages[0].contains("not accessible"));
+}

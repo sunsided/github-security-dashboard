@@ -154,7 +154,9 @@ struct OwnerReposNode {
 #[serde(rename_all = "camelCase")]
 struct RepoConnection {
     page_info: PageInfo,
-    nodes: Vec<RepoNode>,
+    /// Entries the token may not read (e.g. repositories a GitHub App was
+    /// not installed on) come back as `null`.
+    nodes: Vec<Option<RepoNode>>,
 }
 
 #[derive(Deserialize)]
@@ -200,6 +202,13 @@ fn is_not_found(e: &crate::GraphQlError) -> bool {
     e.kind.as_deref() == Some("NOT_FOUND")
 }
 
+/// Errors about a single entry of the repository list, which then is
+/// `null`; the rest of the page is still valid.
+fn is_about_one_repository(e: &crate::GraphQlError) -> bool {
+    let path: Vec<_> = e.path.iter().take(3).filter_map(|p| p.as_str()).collect();
+    is_not_found(e) || path == ["repositoryOwner", "repositories", "nodes"]
+}
+
 impl GitHub {
     /// All repositories owned by an organization or user, with statistics.
     ///
@@ -208,6 +217,7 @@ impl GitHub {
     pub async fn owner_repositories(&self, login: &str, page_size: u32) -> Result<Vec<Repository>> {
         let query = format!("{OWNER_REPOS_QUERY}{REPO_FIELDS}");
         let mut repos = Vec::new();
+        let mut hidden = 0;
         let mut after: Option<String> = None;
         loop {
             let data: Option<OwnerReposData> = self
@@ -215,20 +225,34 @@ impl GitHub {
                     login,
                     &query,
                     json!({ "login": login, "first": page_size, "after": after }),
-                    is_not_found,
+                    is_about_one_repository,
                 )
                 .await?;
             let owner = data
                 .and_then(|d| d.repository_owner)
                 .ok_or_else(|| Error::NotFound(format!("owner {login}")))?;
             let connection = owner.repositories;
-            repos.extend(connection.nodes.into_iter().map(Repository::from));
+            for node in connection.nodes {
+                match node {
+                    Some(node) => repos.push(Repository::from(node)),
+                    None => hidden += 1,
+                }
+            }
             match connection.page_info {
                 PageInfo {
                     has_next_page: true,
                     end_cursor: Some(cursor),
                 } => after = Some(cursor),
-                _ => return Ok(repos),
+                _ => {
+                    if hidden > 0 {
+                        tracing::info!(
+                            owner = login,
+                            hidden,
+                            "repositories not visible to this token were skipped"
+                        );
+                    }
+                    return Ok(repos);
+                }
             }
         }
     }
