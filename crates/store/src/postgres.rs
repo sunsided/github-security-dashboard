@@ -2,6 +2,7 @@
 
 use crate::alerts::{self, *};
 use crate::api::*;
+use crate::deliveries::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
@@ -145,6 +146,27 @@ fn alert_from_row(row: &PgRow) -> Result<Alert> {
         },
         first_seen_run: RunId(row.try_get("first_seen_run")?),
         last_seen_run: RunId(row.try_get("last_seen_run")?),
+    })
+}
+
+macro_rules! delivery_columns {
+    () => {
+        "id, target, attempted_at, first_event_id, last_event_id, events, succeeded, error"
+    };
+}
+
+fn delivery_from_row(row: &PgRow) -> Result<Delivery> {
+    Ok(Delivery {
+        id: row.try_get("id")?,
+        record: DeliveryRecord {
+            target: row.try_get("target")?,
+            attempted_at: row.try_get("attempted_at")?,
+            first_event_id: row.try_get("first_event_id")?,
+            last_event_id: row.try_get("last_event_id")?,
+            events: row.try_get("events")?,
+            succeeded: row.try_get("succeeded")?,
+            error: row.try_get("error")?,
+        },
     })
 }
 
@@ -459,6 +481,7 @@ impl Store for PostgresStore {
              WHERE ($1::bigint IS NULL OR a.repo_id = $1)
                AND ($2::timestamptz IS NULL OR e.at >= $2)
                AND ($4 OR NOT e.baseline)
+               AND ($5::bigint IS NULL OR e.id > $5)
              ORDER BY e.id DESC
              LIMIT $3",
         )
@@ -466,6 +489,7 @@ impl Store for PostgresStore {
         .bind(filter.since)
         .bind(i64::from(filter.limit))
         .bind(filter.include_baseline)
+        .bind(filter.after_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -540,5 +564,48 @@ impl Store for PostgresStore {
                 })
             })
             .collect()
+    }
+
+    async fn record_delivery(&self, delivery: &DeliveryRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO digest_deliveries (target, attempted_at, first_event_id, last_event_id,
+                                           events, succeeded, error)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&delivery.target)
+        .bind(delivery.attempted_at)
+        .bind(delivery.first_event_id)
+        .bind(delivery.last_event_id)
+        .bind(delivery.events)
+        .bind(delivery.succeeded)
+        .bind(&delivery.error)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn last_delivery(&self, target: &str) -> Result<Option<Delivery>> {
+        let row = sqlx::query(concat!(
+            "SELECT ",
+            delivery_columns!(),
+            " FROM digest_deliveries WHERE target = $1 AND succeeded
+             ORDER BY last_event_id DESC, id DESC LIMIT 1"
+        ))
+        .bind(target)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(delivery_from_row).transpose()
+    }
+
+    async fn list_deliveries(&self, limit: u32) -> Result<Vec<Delivery>> {
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            delivery_columns!(),
+            " FROM digest_deliveries ORDER BY id DESC LIMIT $1"
+        ))
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(delivery_from_row).collect()
     }
 }

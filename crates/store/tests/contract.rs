@@ -7,8 +7,8 @@ use assert2::check;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::sync::Arc;
 use store::{
-    AlertFilter, AlertRecord, AlertSource, AlertState, EventFilter, EventKind, RepoFilter,
-    RepoInfo, RepoKind, RepoStats, RunStatus, Severity, SourceStatus, Store,
+    AlertFilter, AlertRecord, AlertSource, AlertState, DeliveryRecord, EventFilter, EventKind,
+    RepoFilter, RepoInfo, RepoKind, RepoStats, RunStatus, Severity, SourceStatus, Store,
 };
 
 fn t0() -> DateTime<Utc> {
@@ -317,6 +317,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
     let events = store
         .alert_events(&EventFilter {
             repo: Some(repo),
+            after_id: None,
             since: None,
             limit: 10,
             include_baseline: false,
@@ -340,6 +341,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
     let recent = store
         .alert_events(&EventFilter {
             repo: None,
+            after_id: None,
             since: Some(t0() + Duration::minutes(90)),
             limit: 10,
             include_baseline: false,
@@ -494,6 +496,7 @@ pub async fn baseline_events_are_filtered_on_request(store: Arc<dyn Store>) {
     let news = store
         .alert_events(&EventFilter {
             repo: None,
+            after_id: None,
             since: None,
             limit: 10,
             include_baseline: false,
@@ -507,6 +510,7 @@ pub async fn baseline_events_are_filtered_on_request(store: Arc<dyn Store>) {
     let all = store
         .alert_events(&EventFilter {
             repo: Some(repo),
+            after_id: None,
             since: None,
             limit: 10,
             include_baseline: true,
@@ -555,6 +559,91 @@ pub async fn first_collected_run_survives_failures(store: Arc<dyn Store>) {
         .unwrap();
 
     check!(first(store.source_statuses(id).await.unwrap()) == Some(run2));
+}
+
+pub async fn deliveries_track_a_watermark_per_target(store: Arc<dyn Store>) {
+    let delivery = |target: &str, last: i64, succeeded: bool| DeliveryRecord {
+        target: target.into(),
+        attempted_at: t0() + Duration::hours(last),
+        first_event_id: 1,
+        last_event_id: last,
+        events: last,
+        succeeded,
+        error: (!succeeded).then(|| "503".to_owned()),
+    };
+    check!(store.last_delivery("slack").await.unwrap() == None);
+
+    store
+        .record_delivery(&delivery("slack", 5, true))
+        .await
+        .unwrap();
+    store
+        .record_delivery(&delivery("slack", 9, false))
+        .await
+        .unwrap();
+    store
+        .record_delivery(&delivery("hook", 7, true))
+        .await
+        .unwrap();
+
+    let slack = store.last_delivery("slack").await.unwrap().unwrap();
+    check!(
+        slack.record.last_event_id == 5,
+        "failed attempts don't move the watermark"
+    );
+    check!(
+        store
+            .last_delivery("hook")
+            .await
+            .unwrap()
+            .unwrap()
+            .record
+            .last_event_id
+            == 7
+    );
+
+    let all = store.list_deliveries(10).await.unwrap();
+    check!(all.len() == 3);
+    check!(all[0].record.target == "hook", "most recent first");
+    check!(all[1].record.error.as_deref() == Some("503"));
+    check!(all[1].record.attempted_at == t0() + Duration::hours(9));
+}
+
+pub async fn events_can_be_read_after_an_id(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let repo = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run)
+        .await
+        .unwrap();
+    for number in 1..=3 {
+        store
+            .record_alerts(
+                repo,
+                run,
+                t0(),
+                &[alert(number, AlertState::Open, Severity::Low)],
+                false,
+            )
+            .await
+            .unwrap();
+    }
+    let all = store
+        .alert_events(&EventFilter {
+            limit: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    check!(all.len() == 3);
+    let after = store
+        .alert_events(&EventFilter {
+            after_id: Some(all[2].id),
+            limit: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    check!(after.iter().map(|e| e.number).collect::<Vec<_>>() == [3, 2]);
 }
 
 /// Instantiates every contract check for one backend. `$open` receives the
@@ -638,6 +727,22 @@ macro_rules! contract_tests {
             async fn first_collected_run_survives_failures() {
                 super::first_collected_run_survives_failures(
                     $open(stringify!(first_collected_run_survives_failures)).await,
+                )
+                .await
+            }
+
+            #[tokio::test]
+            async fn deliveries_track_a_watermark_per_target() {
+                super::deliveries_track_a_watermark_per_target(
+                    $open(stringify!(deliveries_track_a_watermark_per_target)).await,
+                )
+                .await
+            }
+
+            #[tokio::test]
+            async fn events_can_be_read_after_an_id() {
+                super::events_can_be_read_after_an_id(
+                    $open(stringify!(events_can_be_read_after_an_id)).await,
                 )
                 .await
             }

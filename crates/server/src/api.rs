@@ -171,6 +171,7 @@ async fn get_repo(
         .store
         .alert_events(&EventFilter {
             repo: Some(repo.id),
+            after_id: None,
             since: None,
             limit: 100,
             // A repository's history starts with what was there when it was
@@ -227,6 +228,7 @@ async fn list_events(
 ) -> ApiResult<Vec<AlertEvent>> {
     let filter = EventFilter {
         repo: None,
+        after_id: None,
         since: query.since,
         limit: query.limit.min(1000),
         include_baseline: query.include_baseline,

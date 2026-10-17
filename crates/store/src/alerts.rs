@@ -122,6 +122,8 @@ pub struct AlertEvent {
 pub struct EventFilter {
     pub repo: Option<RepoId>,
     pub since: Option<DateTime<Utc>>,
+    /// Only events with a higher ID, i.e. recorded after that event.
+    pub after_id: Option<i64>,
     pub limit: u32,
     /// Also return baseline events (see [`AlertEvent::baseline`]).
     pub include_baseline: bool,
