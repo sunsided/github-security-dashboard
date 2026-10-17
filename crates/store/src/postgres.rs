@@ -474,7 +474,8 @@ impl Store for PostgresStore {
     async fn alert_events(&self, filter: &EventFilter) -> Result<Vec<AlertEvent>> {
         let rows = sqlx::query(
             "SELECT e.id, e.alert_id, e.run_id, e.at, e.kind, e.old, e.new, e.baseline,
-                    r.owner, r.name AS repo, a.source, a.number, a.title
+                    r.owner, r.name AS repo, a.source, a.number, a.title,
+                    a.severity, a.html_url
              FROM alert_events e
              JOIN alerts a ON a.id = e.alert_id
              JOIN repos r ON r.id = a.repo_id
@@ -509,6 +510,8 @@ impl Store for PostgresStore {
                     source: parse(row, "source")?,
                     number: row.try_get("number")?,
                     title: row.try_get("title")?,
+                    severity: parse(row, "severity")?,
+                    html_url: row.try_get("html_url")?,
                 })
             })
             .collect()

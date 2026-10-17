@@ -116,6 +116,9 @@ pub struct AlertEvent {
     pub source: AlertSource,
     pub number: i64,
     pub title: String,
+    /// The alert's current severity and link (not as of the event).
+    pub severity: Severity,
+    pub html_url: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

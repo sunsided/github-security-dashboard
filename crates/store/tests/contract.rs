@@ -335,6 +335,8 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
             ]
     );
     check!(events[1].old.as_deref() == Some("high"));
+    check!(events[3].severity == Severity::Critical, "events carry the alert's current severity");
+    check!(events[3].html_url.ends_with("/security/dependabot/1"));
     check!(events[1].new.as_deref() == Some("critical"));
     check!((events[0].owner.as_str(), events[0].repo.as_str()) == ("acme", "widget"));
 
