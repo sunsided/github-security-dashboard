@@ -20,3 +20,9 @@
 # Tooling caches
 /_catalog/
 /_dereferenced/
+
+# Task
+/Taskfile.yaml
+/Taskfile.yml
+/.task/
+/web/.task/

@@ -1,0 +1,94 @@
+# SvelteKit UI. Included from the root as "web:", also works standalone.
+# Uses yarn via corepack (see packageManager in package.json); not npm.
+# https://taskfile.dev
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - task --list --sort=none
+    silent: true
+
+  install:
+    desc: Install dependencies
+    preconditions:
+      - &yarn
+        sh: command -v yarn
+        msg: 'yarn not found — install Node.js and run: corepack enable'
+    sources:
+      - package.json
+      - yarn.lock
+    generates:
+      - node_modules/.yarn-state.yml
+    cmds:
+      - yarn install --immutable
+
+  dev:
+    desc: Start the Vite dev server (proxies /api to the Rust server)
+    deps: [install]
+    preconditions:
+      - *yarn
+    cmds:
+      - yarn dev {{.CLI_ARGS}}
+
+  build:
+    desc: Build the static UI into build/
+    deps: [install]
+    preconditions:
+      - *yarn
+    sources:
+      - package.json
+      - yarn.lock
+      - vite.config.ts
+      - src/**/*
+      - static/**/*
+    generates:
+      - build/200.html
+    cmds:
+      - yarn build
+
+  test:
+    desc: Run unit tests
+    deps: [install]
+    preconditions:
+      - *yarn
+    cmds:
+      - yarn test {{.CLI_ARGS}}
+
+  fmt:
+    desc: Format source files
+    deps: [install]
+    preconditions:
+      - *yarn
+    cmds:
+      - yarn format
+
+  lint:
+    desc: Check formatting and lint
+    deps: [install]
+    preconditions:
+      - *yarn
+    cmds:
+      - yarn lint
+
+  lint:fix:
+    desc: Lint with auto-fix, then format
+    deps: [install]
+    preconditions:
+      - *yarn
+    cmds:
+      - yarn eslint . --fix
+      - task: fmt
+
+  check:
+    desc: Type-check Svelte and TypeScript
+    deps: [install]
+    preconditions:
+      - *yarn
+    cmds:
+      - yarn check
+
+  clean:
+    desc: Remove build output (keeps node_modules)
+    cmds:
+      - rm -rf build .svelte-kit

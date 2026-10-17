@@ -1,0 +1,32 @@
+# Copy to config.toml (gitignored), or run: task setup
+
+# The API is unauthenticated; keep it on loopback unless something in front
+# of it handles authentication.
+listen = "127.0.0.1:8080"
+
+# Requests are only answered for localhost, 127.0.0.1 and [::1] (protects
+# against DNS rebinding). Add the hostname here if a proxy forwards others.
+allowed_hosts = []
+
+# Time between collector runs (humantime syntax: "15m", "1h 30m", ...).
+poll_interval = "30m"
+
+[storage]
+url = "sqlite://dashboard.db"
+
+[auth]
+# Name of the environment variable holding a GitHub token. A fine-grained
+# personal access token needs read access to metadata, Dependabot alerts,
+# code scanning alerts and secret scanning alerts on the tracked owners.
+token_env = "GITHUB_TOKEN"
+
+[collector]
+# Organizations and users whose own repositories are tracked.
+owners = ["sunsided"]
+# Further repositories, as "owner/name".
+external_repos = []
+# Repositories per GraphQL page. Counting commit history is expensive for
+# large repositories; lower this if GitHub reports timeouts.
+page_size = 25
+# Parallel REST requests.
+concurrency = 8

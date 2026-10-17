@@ -1,0 +1,153 @@
+# GitHub security dashboard: Rust workspace (crates/*) + SvelteKit UI (web/).
+# Local overrides go into a gitignored Taskfile.yaml.
+# https://taskfile.dev
+version: '3'
+
+dotenv:
+  - .env
+
+includes:
+  web:
+    taskfile: web/Taskfile.dist.yaml
+    dir: web
+
+vars:
+  PROFILE: '{{ .PROFILE | default "debug" }}'
+  PROFILE_FLAG: '{{ if eq .PROFILE "release" }}--release{{ end }}'
+  CONFIG: '{{ .CONFIG | default "config.toml" }}'
+
+tasks:
+  default:
+    cmds:
+      - task --list --sort=none
+    silent: true
+
+  setup:
+    desc: Create config.toml and .env from the examples, install UI dependencies
+    cmds:
+      - task: setup:config
+      - task: web:install
+
+  setup:config:
+    internal: true
+    status:
+      - test -f {{.CONFIG}}
+      - test -f .env
+    cmds:
+      - test -f {{.CONFIG}} || cp config.example.toml {{.CONFIG}}
+      - test -f .env || cp .env.example .env
+      - echo "Edit {{.CONFIG}} (owners to track) and .env (GITHUB_TOKEN)."
+
+  dev:
+    desc: Run the server and the Vite dev server side by side (UI on :5173)
+    deps: [run, web:dev]
+
+  run:
+    desc: Run the server (collector + API + UI on :8080)
+    preconditions:
+      - &cargo
+        sh: command -v cargo
+        msg: "cargo not found — install Rust from https://rustup.rs/"
+      - &config
+        sh: test -f {{.CONFIG}}
+        msg: "{{.CONFIG}} not found — run: task setup"
+    cmds:
+      - cargo run {{.PROFILE_FLAG}} --bin server -- --config {{.CONFIG}} {{.CLI_ARGS}}
+
+  collect:
+    desc: Run the collector once and exit
+    preconditions:
+      - *cargo
+      - *config
+    cmds:
+      - cargo run {{.PROFILE_FLAG}} --bin server -- --config {{.CONFIG}} --once
+
+  build:
+    desc: Build the workspace (PROFILE=release for optimized code)
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo build --workspace --all-targets {{.PROFILE_FLAG}}
+
+  build:release:
+    desc: Build the UI and a release server binary with the UI embedded
+    deps: [web:build]
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo build --release --bin server
+      - echo "Binary at target/release/server"
+
+  test:
+    desc: Run all tests (Rust + UI)
+    aliases: [t]
+    preconditions:
+      - *cargo
+    env:
+      RUST_LOG: '{{ .RUST_LOG | default "off" }}'
+    cmds:
+      - cargo test --workspace {{.CLI_ARGS}}
+      - task: web:test
+
+  fmt:
+    desc: Format all code
+    aliases: [format]
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo fmt --all
+      - task: web:fmt
+
+  lint:
+    desc: Lint all code (warnings are errors)
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo clippy --workspace --all-targets -- -D warnings
+      - task: web:lint
+
+  lint:fix:
+    desc: Apply lint fixes and reformat
+    aliases: [fix]
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+      - cargo fmt --all
+      - task: web:lint:fix
+
+  check:
+    desc: All static checks (format, lint, type-check)
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo fmt --all --check
+      - task: lint
+      - task: web:check
+
+  ci:
+    desc: Everything CI runs (checks + tests + UI build)
+    cmds:
+      - task: check
+      - task: test
+      - task: web:build
+
+  docs:
+    desc: Build API docs for the workspace
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo doc --workspace --no-deps
+
+  docs:open:
+    desc: Build and open API docs
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo doc --workspace --no-deps --open
+
+  clean:
+    desc: Remove build artifacts (Rust + UI)
+    deps: [web:clean]
+    cmds:
+      - cargo clean
