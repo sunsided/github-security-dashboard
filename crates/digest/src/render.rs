@@ -84,7 +84,8 @@ fn list_section(title: &str, items: &[Item], max_items: usize) -> Option<Value> 
     let mut shown = 0;
     for item in items.iter().take(max_items) {
         let next = line(item);
-        if text.len() + next.len() + 40 > SLACK_SECTION_LIMIT {
+        // +1 for the newline before the line, 40 for "…and N more".
+        if text.len() + 1 + next.len() + 40 > SLACK_SECTION_LIMIT {
             break;
         }
         text.push('\n');
