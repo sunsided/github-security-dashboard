@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Read-only: CI needs no secrets and writes nothing back.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: task ci + PostgreSQL contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: dashboard
+          POSTGRES_PASSWORD: dashboard
+          POSTGRES_DB: dashboard
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U dashboard -d dashboard"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # Yarn 4 is pinned in web/package.json (packageManager) and provided
+      # through corepack.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: task ci
+        run: task ci
+
+      # The task checks that the database is reachable first, so these tests
+      # can't pass by skipping.
+      # Only this step sees the database URL: with it in the job environment,
+      # task ci's workspace test run would run the PostgreSQL tests as well.
+      - name: task test:postgres
+        run: task test:postgres
+        env:
+          DATABASE_URL_PG: postgres://dashboard:dashboard@127.0.0.1:54329/dashboard
