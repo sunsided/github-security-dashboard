@@ -84,10 +84,12 @@ async fn lists_owner_repositories_across_pages() {
         .mount(&server)
         .await;
 
-    let repos = client(&server)
+    let listing = client(&server)
         .owner_repositories("acme", 25)
         .await
         .unwrap();
+    check!(listing.hidden == 0);
+    let repos = listing.repositories;
     check!(repos.len() == 2);
 
     let alpha = &repos[0];
@@ -392,12 +394,14 @@ async fn repositories_the_token_cannot_read_are_skipped() {
         .mount(&server)
         .await;
 
-    let repos = client(&server)
+    let listing = client(&server)
         .owner_repositories("acme", 25)
         .await
         .unwrap();
-    check!(repos.len() == 1);
-    check!(repos[0].name == "visible");
+    check!(listing.repositories.len() == 1);
+    check!(listing.repositories[0].name == "visible");
+    check!(listing.hidden == 1);
+    check!(listing.hidden_reasons == ["Resource not accessible by integration"]);
 }
 
 #[tokio::test]

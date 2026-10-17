@@ -168,3 +168,53 @@ async fn run_fails_when_nothing_could_be_collected() {
     check!(summary.status == RunStatus::Failed);
     check!(summary.repos == 0);
 }
+
+#[tokio::test]
+async fn hidden_repositories_make_the_run_partial() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "repositoryOwner": { "repositories": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [repo_node("me", "User", "public-one"), null, null]
+            }}},
+            "errors": [
+                { "type": "FORBIDDEN", "message": "Resource not accessible by integration",
+                  "path": ["repositoryOwner", "repositories", "nodes", 1, "issues"] },
+                { "type": "FORBIDDEN", "message": "Resource not accessible by integration",
+                  "path": ["repositoryOwner", "repositories", "nodes", 2, "issues"] }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex("/contributors$"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    // Alert sources answer 404: unavailable, which is not a run error.
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let store = store::connect("sqlite::memory:").await.unwrap();
+    let config = CollectorConfig {
+        owners: vec!["me".into()],
+        ..CollectorConfig::default()
+    };
+    let summary = Collector::new(github(&server), store, config)
+        .run()
+        .await
+        .unwrap();
+
+    check!(summary.status == RunStatus::Partial);
+    check!(summary.repos == 1);
+    check!(summary.errors.len() == 1);
+    check!(summary.errors[0].contains("2 repositories are listed but not readable"));
+    check!(
+        summary.errors[0].contains("Resource not accessible by integration"),
+        "reason is reported once"
+    );
+}

@@ -16,7 +16,7 @@ pub use app::AppProvider;
 pub use auth::{PatProvider, Secret, TokenProvider};
 pub use client::{ClientConfig, GitHub, GraphQlError, RateLimit};
 pub use link::{find_rel, last_page};
-pub use repos::{OwnerKind, Repository};
+pub use repos::{OwnerKind, Repository, RepositoryListing};
 
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;

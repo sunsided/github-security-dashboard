@@ -126,15 +126,15 @@ impl GitHub {
     }
 
     /// Runs a GraphQL query. Errors in the response fail the call unless
-    /// `tolerate` accepts every one of them, in which case partial data is
-    /// returned.
+    /// `tolerate` accepts every one of them, in which case the partial data
+    /// is returned together with the tolerated errors.
     pub(crate) async fn graphql<V, T>(
         &self,
         owner: &str,
         query: &str,
         variables: V,
         tolerate: impl Fn(&GraphQlError) -> bool,
-    ) -> Result<Option<T>>
+    ) -> Result<(Option<T>, Vec<GraphQlError>)>
     where
         V: Serialize,
         T: DeserializeOwned,
@@ -154,7 +154,7 @@ impl GitHub {
                 parsed.errors.into_iter().map(|e| e.message).collect(),
             ));
         }
-        Ok(parsed.data)
+        Ok((parsed.data, parsed.errors))
     }
 
     /// GET with conditional request support: a `304 Not Modified` replays

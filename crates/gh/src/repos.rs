@@ -55,6 +55,17 @@ pub enum OwnerKind {
     User,
 }
 
+/// An owner's repositories as far as the token can read them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepositoryListing {
+    pub repositories: Vec<Repository>,
+    /// Entries GitHub listed but returned as `null`, typically private
+    /// repositories the token lacks a permission for.
+    pub hidden: usize,
+    /// GitHub's distinct explanations for the hidden entries.
+    pub hidden_reasons: Vec<String>,
+}
+
 /// Repository metadata and statistics, flattened from GraphQL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Repository {
@@ -214,13 +225,16 @@ impl GitHub {
     ///
     /// `page_size` trades request count against GraphQL query cost; counting
     /// commit history is expensive on large repositories, so keep it modest.
-    pub async fn owner_repositories(&self, login: &str, page_size: u32) -> Result<Vec<Repository>> {
+    pub async fn owner_repositories(
+        &self,
+        login: &str,
+        page_size: u32,
+    ) -> Result<RepositoryListing> {
         let query = format!("{OWNER_REPOS_QUERY}{REPO_FIELDS}");
-        let mut repos = Vec::new();
-        let mut hidden = 0;
+        let mut listing = RepositoryListing::default();
         let mut after: Option<String> = None;
         loop {
-            let data: Option<OwnerReposData> = self
+            let (data, tolerated): (Option<OwnerReposData>, _) = self
                 .graphql(
                     login,
                     &query,
@@ -234,8 +248,13 @@ impl GitHub {
             let connection = owner.repositories;
             for node in connection.nodes {
                 match node {
-                    Some(node) => repos.push(Repository::from(node)),
-                    None => hidden += 1,
+                    Some(node) => listing.repositories.push(Repository::from(node)),
+                    None => listing.hidden += 1,
+                }
+            }
+            for error in tolerated {
+                if !listing.hidden_reasons.contains(&error.message) {
+                    listing.hidden_reasons.push(error.message);
                 }
             }
             match connection.page_info {
@@ -243,16 +262,7 @@ impl GitHub {
                     has_next_page: true,
                     end_cursor: Some(cursor),
                 } => after = Some(cursor),
-                _ => {
-                    if hidden > 0 {
-                        tracing::info!(
-                            owner = login,
-                            hidden,
-                            "repositories not visible to this token were skipped"
-                        );
-                    }
-                    return Ok(repos);
-                }
+                _ => return Ok(listing),
             }
         }
     }
@@ -260,7 +270,7 @@ impl GitHub {
     /// A single repository with statistics.
     pub async fn repository(&self, owner: &str, name: &str) -> Result<Repository> {
         let query = format!("{REPO_QUERY}{REPO_FIELDS}");
-        let data: Option<RepoData> = self
+        let (data, _): (Option<RepoData>, _) = self
             .graphql(
                 owner,
                 &query,
