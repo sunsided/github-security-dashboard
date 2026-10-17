@@ -10,7 +10,7 @@ pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    #[error("unsupported storage URL: {0}")]
+    #[error("unsupported storage URL scheme: {0:?}")]
     UnsupportedUrl(String),
     #[error("invalid stored value: {0}")]
     InvalidData(String),

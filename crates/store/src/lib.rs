@@ -20,17 +20,13 @@ pub async fn connect(url: &str) -> Result<Arc<dyn Store>> {
         return Ok(Arc::new(sqlite::SqliteStore::connect(url).await?));
     }
 
-    Err(StoreError::UnsupportedUrl(redact(url)))
+    Err(StoreError::UnsupportedUrl(scheme_of(url).to_owned()))
 }
 
-/// Strips credentials from a connection URL before it ends up in an error.
-fn redact(url: &str) -> String {
-    match (url.find("://"), url.rfind('@')) {
-        (Some(scheme_end), Some(at)) if at > scheme_end => {
-            format!("{}://***{}", &url[..scheme_end], &url[at..])
-        }
-        _ => url.to_owned(),
-    }
+/// The URL scheme only: everything after it may carry credentials, in the
+/// userinfo part as well as in query parameters.
+fn scheme_of(url: &str) -> &str {
+    url.split_once(':').map_or("<none>", |(scheme, _)| scheme)
 }
 
 #[cfg(test)]
@@ -38,11 +34,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn redact_hides_credentials() {
-        assert_eq!(
-            redact("postgres://user:secret@db:5432/x"),
-            "postgres://***@db:5432/x"
-        );
-        assert_eq!(redact("mysql://db/x"), "mysql://db/x");
+    fn error_shows_scheme_only() {
+        assert_eq!(scheme_of("postgres://user:secret@db:5432/x"), "postgres");
+        assert_eq!(scheme_of("mysql://db/x?password=secret"), "mysql");
+        assert_eq!(scheme_of("no-scheme-here"), "<none>");
     }
 }
