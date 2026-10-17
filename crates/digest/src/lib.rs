@@ -58,7 +58,11 @@ pub struct DigestService {
     started_at: DateTime<Utc>,
     backoff: std::time::Duration,
     max_events: u32,
+    listener: Option<Listener>,
 }
+
+/// Called with the outcome of every delivery attempt.
+pub type Listener = Arc<dyn Fn(&Outcome) + Send + Sync>;
 
 impl DigestService {
     /// `env` looks up the environment variables holding webhook URLs.
@@ -98,11 +102,18 @@ impl DigestService {
             started_at: Utc::now(),
             backoff: std::time::Duration::from_secs(2),
             max_events: MAX_EVENTS,
+            listener: None,
         })
     }
 
     pub fn with_retry_backoff(mut self, backoff: std::time::Duration) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    /// Notifies `listener` of every delivery attempt's outcome.
+    pub fn with_listener(mut self, listener: Listener) -> Self {
+        self.listener = Some(listener);
         self
     }
 
@@ -233,6 +244,14 @@ impl DigestService {
     }
 
     async fn send_to(&self, target: &Target, now: DateTime<Utc>) -> Outcome {
+        let outcome = self.attempt(target, now).await;
+        if let Some(listener) = &self.listener {
+            listener(&outcome);
+        }
+        outcome
+    }
+
+    async fn attempt(&self, target: &Target, now: DateTime<Utc>) -> Outcome {
         let name = target.config.name.clone();
         let (digest, watermark) = match self.compose(&name, now).await {
             Ok(composed) => composed,

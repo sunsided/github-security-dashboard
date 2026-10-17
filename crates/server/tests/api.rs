@@ -8,6 +8,7 @@ use serde_json::Value;
 use server::api::AppState;
 use server::config::Scoring;
 use server::guard::{AllowedHosts, CSRF_HEADER};
+use server::realtime::{Hub, RealtimeConfig};
 use server::scheduler::Scheduler;
 use std::sync::Arc;
 use store::{
@@ -87,9 +88,16 @@ async fn seeded_state() -> AppState {
         Arc::clone(&store),
         CollectorConfig::default(),
     );
+    let hub = Arc::new(Hub::new(
+        RealtimeConfig::default(),
+        b"test signing key",
+        AllowedHosts::new(&[]),
+    ));
     let scheduler = Arc::new(Scheduler::new(
         collector,
         std::time::Duration::from_secs(3600),
+        Arc::clone(&store),
+        Arc::clone(&hub),
     ));
     AppState {
         store,
@@ -98,6 +106,7 @@ async fn seeded_state() -> AppState {
         scoring: Scoring::default(),
         auth: "personal access token",
         digest: None,
+        realtime: hub,
     }
 }
 

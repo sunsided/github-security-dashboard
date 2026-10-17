@@ -19,7 +19,10 @@ chrono.workspace = true
 clap.workspace = true
 collector.workspace = true
 daily-digest.workspace = true
+futures-util.workspace = true
 gh.workspace = true
+getrandom.workspace = true
+jsonwebtoken.workspace = true
 humantime-serde.workspace = true
 mime_guess.workspace = true
 rust-embed.workspace = true
@@ -33,6 +36,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+tokio-tungstenite.workspace = true
 chrono-tz.workspace = true
 assert2.workspace = true
 tower = { version = "0.5", features = ["util"] }

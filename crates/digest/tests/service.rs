@@ -390,3 +390,26 @@ async fn a_digest_of_exactly_the_cap_is_not_truncated() {
     check!(digest["truncated"] == false);
     check!(digest["headline"] == "3 new alerts");
 }
+
+#[tokio::test]
+async fn listeners_hear_every_outcome() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let (store, repo, run) = store_with_repo().await;
+    open(&store, repo, run, 1, Severity::High, false).await;
+    let (config, env) = config(&server);
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&heard);
+    let service = DigestService::new(Arc::clone(&store), config, env)
+        .unwrap()
+        .with_listener(Arc::new(move |outcome: &Outcome| {
+            sink.lock().unwrap().push(outcome.clone());
+        }));
+
+    let outcomes = service.send_now(Utc::now()).await;
+    check!(*heard.lock().unwrap() == outcomes);
+    check!(outcomes.len() == 2);
+}

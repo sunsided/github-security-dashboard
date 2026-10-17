@@ -33,6 +33,11 @@ impl AllowedHosts {
         let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
             return false;
         };
+        self.allows_host(host)
+    }
+
+    /// `host` as in a Host header or an origin: a name, optionally with port.
+    pub fn allows_host(&self, host: &str) -> bool {
         let name = strip_port(host).to_ascii_lowercase();
         self.0.contains(&name)
     }

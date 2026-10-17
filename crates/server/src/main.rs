@@ -1,10 +1,11 @@
 use anyhow::Context;
 use clap::Parser;
 use collector::Collector;
-use daily_digest::DigestService;
+use daily_digest::{DigestService, Outcome};
 use gh::{ClientConfig, GitHub};
 use server::api::AppState;
 use server::config::Config;
+use server::realtime::{Event, Hub};
 use server::scheduler::Scheduler;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,11 +44,26 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("opening storage")?;
     let client_config = ClientConfig::default();
+    let allowed_hosts = server::guard::AllowedHosts::new(&config.allowed_hosts);
+    let hub = Arc::new(realtime_hub(&config, allowed_hosts.clone())?);
+
     let digest = if config.digest.enabled {
+        let events = Arc::clone(&hub);
         let service = DigestService::new(Arc::clone(&store), config.digest.clone(), |name| {
             std::env::var(name).ok()
         })
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| anyhow::anyhow!(e))?
+        .with_listener(Arc::new(move |outcome: &Outcome| {
+            let (target, kind) = match outcome {
+                Outcome::Sent { target, .. } => (target, "sent"),
+                Outcome::Quiet { target } => (target, "quiet"),
+                Outcome::Failed { target, .. } => (target, "failed"),
+            };
+            events.publish(Event::DigestDelivered {
+                target: target.clone(),
+                outcome: kind.into(),
+            });
+        }));
         Some(Arc::new(service))
     } else {
         None
@@ -77,13 +93,17 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let scheduler = Arc::new(Scheduler::new(collector, config.poll_interval));
+    let scheduler = Arc::new(Scheduler::new(
+        collector,
+        config.poll_interval,
+        Arc::clone(&store),
+        Arc::clone(&hub),
+    ));
     tokio::spawn(Arc::clone(&scheduler).run_forever());
     if let Some(digest) = &digest {
         tokio::spawn(Arc::clone(digest).run_forever());
     }
 
-    let allowed_hosts = server::guard::AllowedHosts::new(&config.allowed_hosts);
     let app = server::app(
         AppState {
             store,
@@ -92,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
             scoring: config.scoring,
             auth,
             digest,
+            realtime: hub,
         },
         allowed_hosts,
     );
@@ -113,4 +134,23 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+/// The live-update hub, signing tokens with the configured key or, without
+/// one, a key that lives as long as the process.
+fn realtime_hub(
+    config: &Config,
+    allowed_hosts: server::guard::AllowedHosts,
+) -> anyhow::Result<Hub> {
+    let key = match &config.realtime.signing_key_env {
+        Some(var) => std::env::var(var)
+            .ok()
+            .filter(|k| k.len() >= 32)
+            .with_context(|| {
+                format!("environment variable {var} must hold a signing key of at least 32 bytes")
+            })?
+            .into_bytes(),
+        None => Hub::random_key().to_vec(),
+    };
+    Ok(Hub::new(config.realtime.clone(), &key, allowed_hosts))
 }
