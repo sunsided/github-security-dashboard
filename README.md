@@ -31,12 +31,16 @@ Other tasks worth knowing (`task` alone lists all of them):
 
 For a sense of scale: the first run against my own account (718 repositories, plus two external ones) takes about three minutes and some 700 requests, most of them contributor counts. Later runs reuse ETags where GitHub supports them, and those don't count against the quota.
 
+Alerts are cheap for organizations (one request per source covers every repository, provided the token belongs to an owner or security manager) and comparatively expensive for user accounts, where every repository needs three requests of its own. That is why archived repositories and forks are skipped by default (`collector.alerts.skip_archived`, `skip_forks`). With those defaults, a full run over my account, alerts included, takes a little under four minutes. The resulting numbers match what GitHub's Security tab shows, down to repositories with a couple of hundred open Dependabot alerts.
+
+Every alert state change is written to an append-only log, which the Activity page shows. "Fixed" and "dismissed" are told apart by looking up alerts individually once they drop out of the open list; a source that couldn't be read in a run never closes anything, so a flaky 503 doesn't rewrite history.
+
 ## Status
 
 Work in progress. The plan, roughly in order:
 
 1. ~~Workspace scaffold, configuration, personal access token auth, repository stats via GraphQL, pluggable storage with an SQLite backend, and a minimal table UI.~~ Done.
-2. Alerts from Dependabot, code scanning and secret scanning (organization-wide endpoints where possible, per repository otherwise), severity scoring and a detail page.
+2. ~~Alerts from Dependabot, code scanning and secret scanning (organization-wide endpoints where possible, per repository otherwise), severity scoring and a detail page.~~ Done.
 3. GitHub App authentication.
 4. External repositories: when I can't read their alerts (GitHub only shows them to admins and security managers), the server pulls the dependency SBOM and matches it against [OSV](https://osv.dev). Those numbers are labeled as estimates, because that's what they are.
 5. A PostgreSQL backend for keeping the audit history long term.
