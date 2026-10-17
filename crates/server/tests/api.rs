@@ -5,10 +5,13 @@ use collector::{Collector, CollectorConfig};
 use gh::{ClientConfig, GitHub, PatProvider, Secret};
 use serde_json::Value;
 use server::api::AppState;
+use server::config::Scoring;
 use server::guard::{AllowedHosts, CSRF_HEADER};
 use server::scheduler::Scheduler;
 use std::sync::Arc;
-use store::{RepoInfo, RepoKind, RepoStats, RunStatus};
+use store::{
+    AlertRecord, AlertSource, AlertState, RepoInfo, RepoKind, RepoStats, RunStatus, Severity,
+};
 use tower::ServiceExt;
 
 async fn seeded_state() -> AppState {
@@ -37,6 +40,29 @@ async fn seeded_state() -> AppState {
             ..RepoStats::default()
         };
         store.insert_snapshot(id, run, now, &stats).await.unwrap();
+        if name == "dusty" {
+            let alert = |number, severity| AlertRecord {
+                source: AlertSource::Dependabot,
+                number,
+                state: AlertState::Open,
+                severity,
+                title: format!("advisory {number}"),
+                location: Some("npm/lodash".into()),
+                html_url: format!("https://github.com/acme/dusty/security/dependabot/{number}"),
+                created_at: now,
+                closed_at: None,
+                estimated: false,
+            };
+            store
+                .record_alerts(
+                    id,
+                    run,
+                    now,
+                    &[alert(1, Severity::Critical), alert(2, Severity::Low)],
+                )
+                .await
+                .unwrap();
+        }
     }
     store
         .finish_run(run, now, RunStatus::Succeeded, Some(4999), &[])
@@ -67,6 +93,7 @@ async fn seeded_state() -> AppState {
         store,
         github,
         scheduler,
+        scoring: Scoring::default(),
     }
 }
 
@@ -108,6 +135,8 @@ async fn lists_repositories_with_staleness() {
     assert_eq!(dusty["stale"], true);
     assert_eq!(dusty["days_since_commit"], 400);
     assert_eq!(dusty["latest"]["open_issues"], 1);
+    assert_eq!(dusty["open_alerts"]["critical"], 1);
+    assert_eq!(dusty["risk_score"], 11);
 
     assert_eq!(repos[1]["stale"], false);
 }
@@ -126,6 +155,7 @@ async fn repository_detail_and_not_found() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["name"], "fresh");
     assert_eq!(body["history"].as_array().unwrap().len(), 1);
+    assert_eq!(body["alerts"].as_array().unwrap().len(), 0);
 
     let (status, _) = call(state, "GET", "/api/repos/acme/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -139,6 +169,9 @@ async fn summary_aggregates_latest_snapshots() {
     assert_eq!(body["stale_repos"], 1);
     assert_eq!(body["open_issues"], 4);
     assert_eq!(body["open_prs"], 2);
+    assert_eq!(body["open_alerts"]["critical"], 1);
+    assert_eq!(body["open_alerts"]["low"], 1);
+    assert_eq!(body["repos_with_alerts"], 1);
     assert_eq!(body["collecting"], false);
     assert_eq!(body["last_run"]["status"], "succeeded");
     assert_eq!(body["last_run"]["rate_limit_remaining"], 4999);
@@ -178,4 +211,33 @@ async fn refresh_requires_custom_header() {
         .unwrap();
     let (status, _) = send(seeded_state().await, request).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn repository_detail_lists_alerts_and_events() {
+    let (status, body) = call(seeded_state().await, "GET", "/api/repos/acme/dusty").await;
+    assert_eq!(status, StatusCode::OK);
+    let alerts = body["alerts"].as_array().unwrap();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0]["severity"], "critical", "most severe first");
+    assert_eq!(alerts[0]["source"], "dependabot");
+    assert_eq!(body["events"].as_array().unwrap().len(), 2);
+    assert_eq!(body["events"][0]["kind"], "opened");
+}
+
+#[tokio::test]
+async fn event_feed_spans_repositories() {
+    let (status, body) = call(seeded_state().await, "GET", "/api/events?limit=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body.as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["repo"], "dusty");
+
+    let (_, none) = call(
+        seeded_state().await,
+        "GET",
+        "/api/events?since=2999-01-01T00:00:00Z",
+    )
+    .await;
+    assert_eq!(none.as_array().unwrap().len(), 0);
 }

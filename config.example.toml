@@ -30,3 +30,21 @@ external_repos = []
 page_size = 25
 # Parallel REST requests.
 concurrency = 8
+
+[collector.alerts]
+# Alert sources to collect.
+sources = ["dependabot", "code_scanning", "secret_scanning"]
+# Per-repository requests cost three calls per repository and run; skip
+# repositories that rarely matter. Organization-wide requests are not
+# affected and always cover everything.
+skip_archived = true
+skip_forks = true
+# GitHub gives leaked secrets no severity; this is the one they get here.
+secret_severity = "critical"
+
+[scoring]
+# Risk score = sum of open alerts weighted by severity.
+critical = 10
+high = 5
+medium = 2
+low = 1

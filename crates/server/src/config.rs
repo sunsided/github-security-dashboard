@@ -25,6 +25,38 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub collector: CollectorConfig,
+    #[serde(default)]
+    pub scoring: Scoring,
+}
+
+/// Weights of open alerts per severity in a repository's risk score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Scoring {
+    pub critical: i64,
+    pub high: i64,
+    pub medium: i64,
+    pub low: i64,
+}
+
+impl Default for Scoring {
+    fn default() -> Self {
+        Self {
+            critical: 10,
+            high: 5,
+            medium: 2,
+            low: 1,
+        }
+    }
+}
+
+impl Scoring {
+    pub fn score(&self, counts: &store::SeverityCounts) -> i64 {
+        self.critical * counts.critical
+            + self.high * counts.high
+            + self.medium * counts.medium
+            + self.low * counts.low
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +153,18 @@ mod tests {
         assert_eq!(config.storage.url, "sqlite://dashboard.db");
         assert_eq!(config.auth.token_env, "GITHUB_TOKEN");
         assert_eq!(config.collector.page_size, 25);
+        assert_eq!(config.scoring, Scoring::default());
+    }
+
+    #[test]
+    fn scores_weight_severities() {
+        let counts = store::SeverityCounts {
+            critical: 1,
+            high: 2,
+            medium: 0,
+            low: 3,
+        };
+        assert_eq!(Scoring::default().score(&counts), 10 + 2 * 5 + 3);
     }
 
     #[test]

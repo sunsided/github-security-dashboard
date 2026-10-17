@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
             store,
             github,
             scheduler,
+            scoring: config.scoring,
         },
         allowed_hosts,
     );
