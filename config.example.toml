@@ -104,3 +104,14 @@ max_items = 15
 # name = "events"
 # kind = "json"             # any webhook, the digest as JSON
 # url_env = "DIGEST_WEBHOOK_URL"
+
+[realtime]
+# Live updates for the UI over a WebSocket. A client gets a short-lived
+# connection token from POST /api/realtime/token (an HS256 JWT in
+# Centrifugo's format) and sends it as its first message.
+token_ttl = "5m"
+# Time a client has to send its token after connecting.
+connect_timeout = "10s"
+# Environment variable with the signing key (32+ bytes), e.g. to share it with
+# Centrifugo's token_hmac_secret_key. Without it, a random key per process.
+# signing_key_env = "REALTIME_SIGNING_KEY"

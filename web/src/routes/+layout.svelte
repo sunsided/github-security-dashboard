@@ -1,10 +1,32 @@
 <script lang="ts">
 	import favicon from '#lib/assets/favicon.svg';
 	import { resolve } from '$app/paths';
+	import { onMount } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import { live } from '#lib/realtime.svelte.js';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+
+	// Events say "something changed"; bursts (a run touching many
+	// repositories) collapse into one reload. One connection for the app's
+	// lifetime: nothing here is reactive, hence onMount.
+	onMount(() => {
+		let pending: ReturnType<typeof setTimeout> | undefined;
+		const unsubscribe = live.subscribe(() => {
+			clearTimeout(pending);
+			pending = setTimeout(() => void invalidateAll(), 300);
+		});
+		live.start();
+		return () => {
+			clearTimeout(pending);
+			unsubscribe();
+			live.stop();
+		};
+	});
+
+	const statusText = { live: 'Live', connecting: 'Connecting…', offline: 'Reconnecting…' };
 
 	const links = [
 		{ route: '/', label: 'Repositories' },
@@ -30,6 +52,10 @@
 			</a>
 		{/each}
 	</nav>
+	<span class="live {live.status}" title="Live updates from the server">
+		<span aria-hidden="true">{live.status === 'live' ? '●' : '○'}</span>
+		{statusText[live.status]}
+	</span>
 </header>
 
 <main>
@@ -102,6 +128,17 @@
 		padding: 0.9rem 1.5rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--surface-raised);
+	}
+
+	.live {
+		margin-left: auto;
+		font-size: 0.85rem;
+		color: var(--ink-muted);
+		white-space: nowrap;
+	}
+
+	.live.live span {
+		color: var(--good);
 	}
 
 	.brand {

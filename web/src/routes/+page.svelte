@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { requestRefresh, SEVERITIES, type Repo, type RepoKind, type Severity } from '#lib/api.js';
 	import ActivityBadge from '#lib/components/ActivityBadge.svelte';
+	import { live } from '#lib/realtime.svelte.js';
 	import SeverityBadge, { SEVERITY_GLYPHS } from '#lib/components/SeverityBadge.svelte';
 	import StatTile from '#lib/components/StatTile.svelte';
 	import { activity, formatCount, formatDateTime } from '#lib/format.js';
@@ -104,12 +105,19 @@
 		refreshing = true;
 		refreshError = null;
 		try {
-			await requestRefresh();
-			// Poll until the server reports the run as finished.
-			do {
-				await new Promise((resolve) => setTimeout(resolve, 2500));
-				await invalidateAll();
-			} while (data.summary.collecting);
+			if (live.status === 'live') {
+				// The layout reloads on run.started / run.finished; just wait.
+				const finished = live.waitFor('run.finished', 30 * 60_000);
+				await requestRefresh();
+				await finished;
+			} else {
+				await requestRefresh();
+				// No live connection: poll until the run is done.
+				do {
+					await new Promise((resolve) => setTimeout(resolve, 2500));
+					await invalidateAll();
+				} while (data.summary.collecting);
+			}
 		} catch (e) {
 			refreshError = e instanceof Error ? e.message : String(e);
 		} finally {

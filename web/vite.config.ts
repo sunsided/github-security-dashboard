@@ -18,7 +18,8 @@ export default defineConfig({
 		})
 	],
 	server: {
-		proxy: { '/api': API }
+		// ws: the live-update socket at /api/realtime goes through the proxy too.
+		proxy: { '/api': { target: API, ws: true } }
 	},
 	test: {
 		expect: { requireAssertions: true },
