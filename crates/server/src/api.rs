@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use store::{
     Alert, AlertEvent, AlertFilter, EventFilter, RepoFilter, RepoKind, RepoOverview, RepoSource,
-    Run, SeverityCounts, Snapshot, Store,
+    Run, RunId, RunStatus, SeverityCounts, Snapshot, Store,
 };
 
 /// Repositories without a commit for this long count as stale.
@@ -68,19 +68,51 @@ struct RepoView {
     stale: bool,
     /// Weighted sum of open alerts; see [`Scoring`].
     risk_score: i64,
+    /// Seen in the latest finished run. `false` means the token can no
+    /// longer read the repository (or it was deleted or transferred), so
+    /// its data is as of `last_seen_run`.
+    refreshed: bool,
+}
+
+/// What every [`RepoView`] of one response is computed against.
+struct ViewContext<'a> {
+    now: DateTime<Utc>,
+    scoring: &'a Scoring,
+    /// Latest run that finished with data (succeeded or partial).
+    latest_run: Option<RunId>,
+}
+
+impl<'a> ViewContext<'a> {
+    async fn load(state: &'a AppState) -> Result<Self, ApiError> {
+        let latest_run = state
+            .store
+            .list_runs(50)
+            .await?
+            .into_iter()
+            .find(|r| matches!(r.status, RunStatus::Succeeded | RunStatus::Partial))
+            .map(|r| r.id);
+        Ok(Self {
+            now: Utc::now(),
+            scoring: &state.scoring,
+            latest_run,
+        })
+    }
 }
 
 impl RepoView {
-    fn new(repo: RepoOverview, now: DateTime<Utc>, scoring: &Scoring) -> Self {
+    fn new(repo: RepoOverview, ctx: &ViewContext<'_>) -> Self {
         let days_since_commit = repo
             .latest
             .as_ref()
             .and_then(|s| s.stats.last_commit_at)
-            .map(|t| (now - t).num_days());
+            .map(|t| (ctx.now - t).num_days());
         Self {
             stale: days_since_commit.is_some_and(|d| d >= STALE_AFTER_DAYS),
             days_since_commit,
-            risk_score: scoring.score(&repo.open_alerts),
+            risk_score: ctx.scoring.score(&repo.open_alerts),
+            refreshed: ctx
+                .latest_run
+                .is_none_or(|run| repo.last_seen_run.0 >= run.0),
             repo,
         }
     }
@@ -103,13 +135,10 @@ async fn list_repos(
         kind: query.kind,
         include_archived: query.include_archived,
     };
-    let now = Utc::now();
+    let ctx = ViewContext::load(&state).await?;
     let repos = state.store.list_repos(&filter).await?;
     Ok(Json(
-        repos
-            .into_iter()
-            .map(|r| RepoView::new(r, now, &state.scoring))
-            .collect(),
+        repos.into_iter().map(|r| RepoView::new(r, &ctx)).collect(),
     ))
 }
 
@@ -150,7 +179,7 @@ async fn get_repo(
         })
         .await?;
     let detail = RepoDetail {
-        repo: RepoView::new(repo, Utc::now(), &state.scoring),
+        repo: RepoView::new(repo, &ViewContext::load(&state).await?),
         history,
         alerts,
         sources,
@@ -214,6 +243,9 @@ struct Summary {
     stale_after_days: i64,
     open_alerts: SeverityCounts,
     repos_with_alerts: usize,
+    /// Non-archived repositories missing from the latest run, left out of
+    /// all totals above.
+    not_refreshed: usize,
     auth: &'static str,
     collecting: bool,
     last_run: Option<Run>,
@@ -221,14 +253,17 @@ struct Summary {
 }
 
 async fn summary(State(state): State<AppState>) -> ApiResult<Summary> {
-    let now = Utc::now();
-    let repos: Vec<RepoView> = state
+    let ctx = ViewContext::load(&state).await?;
+    let all: Vec<RepoView> = state
         .store
         .list_repos(&RepoFilter::default())
         .await?
         .into_iter()
-        .map(|r| RepoView::new(r, now, &state.scoring))
+        .map(|r| RepoView::new(r, &ctx))
         .collect();
+    // Totals only count data the latest run confirmed.
+    let not_refreshed = all.iter().filter(|r| !r.refreshed).count();
+    let repos: Vec<RepoView> = all.into_iter().filter(|r| r.refreshed).collect();
     let mut open_alerts = SeverityCounts::default();
     for r in &repos {
         let c = r.repo.open_alerts;
@@ -250,6 +285,7 @@ async fn summary(State(state): State<AppState>) -> ApiResult<Summary> {
             .iter()
             .filter(|r| r.repo.open_alerts.total() > 0)
             .count(),
+        not_refreshed,
         auth: state.auth,
         collecting: state.scheduler.is_running(),
         last_run: state.store.list_runs(1).await?.into_iter().next(),

@@ -41,7 +41,9 @@
 	let owner = $state('');
 	let kind = $state<RepoKind | ''>('');
 	let showArchived = $state(false);
+	let showNotRefreshed = $state(false);
 	let onlyAlerts = $state(false);
+	let visibility = $state<'' | 'public' | 'private'>('');
 	let refreshing = $state(false);
 	let refreshError = $state<string | null>(null);
 
@@ -70,6 +72,8 @@
 		const rows = data.repos.filter(
 			(r) =>
 				(showArchived || !r.archived) &&
+				(showNotRefreshed || r.refreshed) &&
+				(!visibility || r.private === (visibility === 'private')) &&
 				(!owner || r.owner === owner) &&
 				(!kind || r.kind === kind) &&
 				(!onlyAlerts || r.risk_score > 0) &&
@@ -114,6 +118,7 @@
 	}
 
 	const lastRun = $derived(data.summary.last_run);
+	const notRefreshedCount = $derived(data.repos.filter((r) => !r.refreshed).length);
 	const alertTotal = $derived(SEVERITIES.reduce((sum, s) => sum + data.summary.open_alerts[s], 0));
 	const graphql = $derived(data.summary.rate_limits['graphql']);
 </script>
@@ -190,6 +195,11 @@
 		<option value="user">User</option>
 		<option value="external">External</option>
 	</select>
+	<select bind:value={visibility} aria-label="Visibility">
+		<option value="">Public and private</option>
+		<option value="public">Public</option>
+		<option value="private">Private</option>
+	</select>
 	<label>
 		<input type="checkbox" bind:checked={onlyAlerts} />
 		Only with alerts
@@ -198,6 +208,12 @@
 		<input type="checkbox" bind:checked={showArchived} />
 		Show archived
 	</label>
+	{#if notRefreshedCount > 0}
+		<label title="Not seen in the latest run; their data is outdated">
+			<input type="checkbox" bind:checked={showNotRefreshed} />
+			Show {notRefreshedCount} not refreshed
+		</label>
+	{/if}
 	<span class="count">{visible.length} of {data.repos.length}</span>
 </section>
 
@@ -231,7 +247,7 @@
 		</thead>
 		<tbody>
 			{#each visible as repo (repo.id)}
-				<tr class:archived={repo.archived}>
+				<tr class:archived={repo.archived || !repo.refreshed}>
 					<td>
 						<a href={resolve('/repo/[owner]/[name]', { owner: repo.owner, name: repo.name })}>
 							<span class="owner">{repo.owner}/</span>{repo.name}
@@ -250,6 +266,11 @@
 						<span class="tags">
 							{#if repo.kind === 'external'}<span class="tag">external</span>{/if}
 							{#if repo.archived}<span class="tag">archived</span>{/if}
+							{#if !repo.refreshed}<span
+									class="tag outdated"
+									title="Not seen in the latest run; data as of run #{repo.last_seen_run}"
+									>not refreshed</span
+								>{/if}
 							{#if repo.fork}<span class="tag">fork</span>{/if}
 							{#if repo.private}<span class="tag">private</span>{/if}
 						</span>
@@ -483,6 +504,11 @@
 
 	.tags {
 		margin-left: 0.4rem;
+	}
+
+	.tag.outdated {
+		border-color: var(--warning);
+		color: var(--ink-secondary);
 	}
 
 	.tag {
