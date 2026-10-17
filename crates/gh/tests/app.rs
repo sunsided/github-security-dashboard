@@ -180,3 +180,44 @@ fn invalid_private_key_is_rejected() {
         .unwrap();
     check!(let Error::Auth(message) = &err && message.contains("private key"));
 }
+
+#[tokio::test]
+async fn enterprise_installations_do_not_break_the_list() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/app/installations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": 11, "account": { "slug": "big-corp", "name": "Big Corp" }, "target_type": "Enterprise" },
+            { "id": 12, "account": { "login": "big-corp-eng" }, "target_type": "Organization" },
+            { "id": 13, "account": null }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/app/installations/12/access_tokens"))
+        .respond_with(access_token("inst-12", Duration::hours(1)))
+        .mount(&server)
+        .await;
+
+    check!(
+        provider(&server)
+            .token("big-corp-eng")
+            .await
+            .unwrap()
+            .expose()
+            == "inst-12"
+    );
+}
+
+#[tokio::test]
+async fn undecodable_responses_say_why() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/app/installations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "unexpected": true })))
+        .mount(&server)
+        .await;
+
+    let err = provider(&server).token("acme").await.unwrap_err();
+    check!(let Error::Auth(message) = &err && message.contains("/app/installations") && message.contains("expected a sequence"));
+}

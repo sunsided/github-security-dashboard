@@ -30,9 +30,20 @@ struct Installation {
     account: Option<Account>,
 }
 
+/// A user or organization (`login`), or an enterprise (`slug`, no login).
 #[derive(Deserialize)]
 struct Account {
-    login: String,
+    login: Option<String>,
+    slug: Option<String>,
+}
+
+/// Decodes a JSON body, keeping serde's explanation ("missing field
+/// `login` at line 1 column 312") instead of reqwest's generic message.
+async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
+    let url = response.url().to_string();
+    let body = response.bytes().await?;
+    serde_json::from_slice(&body)
+        .map_err(|e| Error::Auth(format!("unexpected response from {url}: {e}")))
 }
 
 #[derive(Deserialize)]
@@ -142,9 +153,22 @@ impl AppProvider {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|l| link::find_rel(l, "next"))
                 .map(str::to_owned);
-            for installation in response.json::<Vec<Installation>>().await? {
-                if let Some(account) = installation.account {
-                    map.insert(account.login.to_lowercase(), installation.id);
+            for installation in decode::<Vec<Installation>>(response).await? {
+                // Enterprise installations have no login and own no
+                // repositories directly; their organizations install the
+                // App themselves.
+                match installation.account {
+                    Some(Account {
+                        login: Some(login), ..
+                    }) => {
+                        map.insert(login.to_lowercase(), installation.id);
+                    }
+                    Some(Account {
+                        slug: Some(slug), ..
+                    }) => {
+                        tracing::debug!(%slug, "skipping enterprise installation");
+                    }
+                    _ => {}
                 }
             }
         }
@@ -159,7 +183,7 @@ impl AppProvider {
             return Ok(token.clone());
         }
         let url = format!("{}/app/installations/{id}/access_tokens", self.api_url);
-        let token: AccessToken = self.app_request(self.http.post(&url)).await?.json().await?;
+        let token: AccessToken = decode(self.app_request(self.http.post(&url)).await?).await?;
         let secret = Secret::new(token.token);
         cache.tokens.insert(id, (secret.clone(), token.expires_at));
         Ok(secret)
@@ -168,6 +192,10 @@ impl AppProvider {
 
 #[async_trait]
 impl TokenProvider for AppProvider {
+    fn label(&self) -> &'static str {
+        "GitHub App"
+    }
+
     async fn token(&self, owner: &str) -> Result<Secret> {
         let mut cache = self.cache.lock().await;
         let owner = owner.to_lowercase();
