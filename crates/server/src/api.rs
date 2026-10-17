@@ -1,6 +1,7 @@
 //! JSON API under `/api`.
 
 use crate::config::Scoring;
+use crate::realtime::{self, Hub};
 use crate::scheduler::Scheduler;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -31,6 +32,13 @@ pub struct AppState {
     pub auth: &'static str,
     /// `None` unless `[digest] enabled`.
     pub digest: Option<Arc<DigestService>>,
+    pub realtime: Arc<Hub>,
+}
+
+impl axum::extract::FromRef<AppState> for Arc<Hub> {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::clone(&state.realtime)
+    }
 }
 
 pub fn router(state: AppState) -> Router {
@@ -42,6 +50,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/events", get(list_events))
         .route("/api/digest/preview", get(digest_preview))
         .route("/api/digest/deliveries", get(digest_deliveries))
+        .route("/api/realtime/token", post(realtime::token))
+        .route("/api/realtime", get(realtime::connect))
         .route("/api/refresh", post(refresh))
         .with_state(state)
 }

@@ -101,6 +101,12 @@ Every request is a [CloudEvent](https://cloudevents.io) in binary content mode, 
 
 Each target keeps its own watermark in the database. A failed delivery leaves its events for the next digest, a newly added target starts with the last 24 hours rather than the whole history, and a server that was down at digest time catches up when it starts. `task digest:send` sends a digest right away, which is the quickest way to see whether a webhook works; `GET /api/digest/preview` shows what the next one would contain without sending anything.
 
+## Live updates
+
+The UI keeps itself current: when a run starts or finishes, alerts change or a digest goes out, the server says so over a WebSocket and the open pages reload what's affected. The header shows whether the connection is live.
+
+The connection is authenticated with a short-lived token that the UI fetches from `POST /api/realtime/token` and sends as its first message; a socket without a valid token in time is closed. Browsers can't set headers on WebSocket connections, which is why the token travels inside the protocol, and why authentication can later be added in front of the token endpoint without the live connection noticing. The tokens are HS256 JWTs in [Centrifugo](https://centrifugal.dev)'s connection-token format, so swapping in a real Centrifugo later is a server-side change. With `[realtime] signing_key_env` the key can be shared with it; without, a random key is generated at start-up and clients simply fetch a new token after a restart.
+
 ## Status
 
 Work in progress. The plan, roughly in order:

@@ -31,6 +31,8 @@ pub struct Config {
     pub scoring: Scoring,
     #[serde(default)]
     pub digest: daily_digest::DigestConfig,
+    #[serde(default)]
+    pub realtime: crate::realtime::RealtimeConfig,
 }
 
 /// Weights of open alerts per severity in a repository's risk score.
