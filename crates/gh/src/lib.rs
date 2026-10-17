@@ -4,11 +4,13 @@
 //! GraphQL, a handful of REST endpoints, rate limit handling and conditional
 //! requests. Authentication is pluggable through [`TokenProvider`].
 
+mod alerts;
 mod auth;
 mod client;
 mod link;
 mod repos;
 
+pub use alerts::{AlertKind, AlertSeverity, AlertStatus, SecurityAlert};
 pub use auth::{PatProvider, Secret, TokenProvider};
 pub use client::{ClientConfig, GitHub, GraphQlError, RateLimit};
 pub use link::{find_rel, last_page};

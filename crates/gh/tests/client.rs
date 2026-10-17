@@ -305,3 +305,85 @@ async fn etag_hit_replays_cached_response() {
         Some(9)
     );
 }
+
+fn dependabot_json(number: i64, repo: &str) -> Value {
+    json!({
+        "number": number, "state": "open", "html_url": format!("https://github.com/acme/{repo}/security/dependabot/{number}"),
+        "created_at": "2026-01-01T00:00:00Z", "fixed_at": null, "dismissed_at": null, "auto_dismissed_at": null,
+        "dependency": { "package": { "ecosystem": "cargo", "name": "openssl" }, "manifest_path": "Cargo.lock" },
+        "security_advisory": { "summary": "Use after free", "severity": "critical" },
+        "repository": { "name": repo, "owner": { "login": "acme" } }
+    })
+}
+
+#[tokio::test]
+async fn org_alerts_follow_cursor_pages() {
+    let server = MockServer::start().await;
+    let next = format!(
+        r#"<{}/orgs/acme/dependabot/alerts?state=open&per_page=100&after=CURSOR>; rel="next""#,
+        server.uri()
+    );
+    Mock::given(method("GET"))
+        .and(path("/orgs/acme/dependabot/alerts"))
+        .and(query_param("after", "CURSOR"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([dependabot_json(2, "web")])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/orgs/acme/dependabot/alerts"))
+        .and(query_param("state", "open"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("link", next.as_str())
+                .set_body_json(json!([dependabot_json(1, "api")])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let alerts = client(&server)
+        .org_alerts("acme", gh::AlertKind::Dependabot)
+        .await
+        .unwrap();
+    let ids: Vec<_> = alerts.iter().map(|a| (a.repo.as_str(), a.number)).collect();
+    assert_eq!(ids, [("api", 1), ("web", 2)]);
+    assert_eq!(alerts[0].severity, Some(gh::AlertSeverity::Critical));
+}
+
+#[tokio::test]
+async fn secret_scanning_requests_hide_secrets() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/me/app/secret-scanning/alerts"))
+        .and(query_param("hide_secret", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let alerts = client(&server)
+        .repo_alerts("me", "app", gh::AlertKind::SecretScanning)
+        .await
+        .unwrap();
+    assert!(alerts.is_empty());
+}
+
+#[tokio::test]
+async fn disabled_feature_is_inaccessible() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/me/app/code-scanning/alerts"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "message": "Code scanning is not enabled for this repository."
+        })))
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .repo_alerts("me", "app", gh::AlertKind::CodeScanning)
+        .await
+        .unwrap_err();
+    assert!(err.is_inaccessible());
+    assert!(err.to_string().contains("not enabled"));
+}
