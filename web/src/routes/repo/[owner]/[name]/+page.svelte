@@ -22,6 +22,12 @@
 	const openCount = $derived(repo ? repo.alerts.filter((a) => a.state === 'open').length : 0);
 	const closedCount = $derived(repo ? repo.alerts.length - openCount : 0);
 
+	// Archived repositories are skipped by the collector unless configured
+	// otherwise (collector.alerts.skip_archived).
+	const alertsFrozen = $derived(
+		repo?.sources.some((s) => s.status === 'skipped' && s.message === 'archived') ?? false
+	);
+
 	const sourceOrder: AlertSource[] = ['dependabot', 'code_scanning', 'secret_scanning'];
 	const sources = $derived(
 		sourceOrder.map((source) => ({
@@ -69,6 +75,26 @@
 		{#if repo.language}· {repo.language}{/if}
 		{#if repo.default_branch}· default branch <code>{repo.default_branch}</code>{/if}
 	</p>
+
+	{#if !repo.refreshed}
+		<p class="notice" role="status">
+			<strong>Not refreshed.</strong> The latest collector run did not see this repository, so
+			everything below is as of run #{repo.last_seen_run}{#if repo.latest}
+				({formatDateTime(repo.latest.taken_at)}){/if}. The token may have lost access, or the
+			repository was deleted, renamed or transferred.
+		</p>
+	{/if}
+	{#if repo.archived}
+		<p class="notice" role="status">
+			<strong>Archived on GitHub.</strong>
+			{#if alertsFrozen}
+				Statistics are still updated, but alerts are no longer collected for archived repositories,
+				so the alerts below show their state from before it was archived.
+			{:else}
+				It is read-only; alerts can no longer be fixed here.
+			{/if}
+		</p>
+	{/if}
 
 	<section class="tiles" aria-label="Summary">
 		<StatTile label="Risk score" value={formatCount(repo.risk_score)} />
@@ -215,6 +241,20 @@
 
 	.muted {
 		color: var(--ink-muted);
+	}
+
+	.notice {
+		margin: 1rem 0 0;
+		padding: 0.6rem 0.9rem;
+		border: 1px solid var(--border);
+		border-left: 4px solid var(--warning);
+		border-radius: var(--radius);
+		background: var(--surface-raised);
+		color: var(--ink-secondary);
+	}
+
+	.notice strong {
+		color: var(--ink);
 	}
 
 	.small {

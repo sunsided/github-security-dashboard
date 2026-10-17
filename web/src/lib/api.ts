@@ -52,6 +52,8 @@ export interface Repo {
 	days_since_commit: number | null;
 	stale: boolean;
 	risk_score: number;
+	/** Seen in the latest finished run; otherwise the data is as of `last_seen_run`. */
+	refreshed: boolean;
 }
 
 export interface Alert {
@@ -126,6 +128,8 @@ export interface Summary {
 	stale_after_days: number;
 	open_alerts: SeverityCounts;
 	repos_with_alerts: number;
+	/** Repositories missing from the latest run, left out of the totals. */
+	not_refreshed: number;
 	/** How the server authenticates, e.g. "GitHub App". */
 	auth: string;
 	collecting: boolean;
