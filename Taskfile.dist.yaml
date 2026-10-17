@@ -95,6 +95,9 @@ tasks:
     desc: Run the storage contract tests against PostgreSQL (needs task db:up)
     preconditions:
       - *cargo
+      - &psql
+        sh: command -v psql
+        msg: "psql not found — install the PostgreSQL client (e.g. postgresql-client)"
       - sh: psql "{{.DATABASE_URL_PG}}" -c 'select 1' >/dev/null 2>&1
         msg: "PostgreSQL not reachable at {{.DATABASE_URL_PG}} — run: task db:up"
     env:
@@ -122,6 +125,8 @@ tasks:
   db:psql:
     desc: Open psql on the development PostgreSQL
     interactive: true
+    preconditions:
+      - *psql
     cmds:
       - psql "{{.DATABASE_URL_PG}}"
 
