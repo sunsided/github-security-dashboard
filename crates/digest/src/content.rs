@@ -105,9 +105,19 @@ impl Digest {
                         .new
                         .as_deref()
                         .and_then(|s| s.parse::<Severity>().ok());
-                    if let (Some(from), Some(to)) = (from, to)
-                        && rank(to) < rank(from)
-                    {
+                    let (Some(from), Some(to)) = (from, to) else {
+                        // Written by this code from its own enum, so only a
+                        // newer version's severity can get here. Say so
+                        // rather than drop a possible escalation silently.
+                        tracing::warn!(
+                            event = event.id,
+                            old = ?event.old,
+                            new = ?event.new,
+                            "severity change with unknown values left out of the digest"
+                        );
+                        continue;
+                    };
+                    if rank(to) < rank(from) {
                         escalated.push(item(event, format!("{from} → {to}")));
                     }
                 }
