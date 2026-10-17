@@ -92,6 +92,25 @@ pub struct Advisory {
     /// Where the severity came from: "GitHub", "CVSS 9.8", or "unknown".
     pub severity_basis: String,
     pub published: Option<DateTime<Utc>>,
+    /// Other IDs of the same issue (a RUSTSEC entry and its GHSA twin).
+    pub aliases: Vec<String>,
+    /// RustSec's non-vulnerability kinds: "unmaintained", "unsound",
+    /// "notice". `None` for regular advisories.
+    pub informational: Option<String>,
+}
+
+impl Advisory {
+    /// Whether the advisory describes a vulnerability worth an alert.
+    /// Maintenance notices are left out, as Dependabot does; unsoundness
+    /// (memory safety) stays.
+    pub fn is_vulnerability(&self) -> bool {
+        matches!(self.informational.as_deref(), None | Some("unsound"))
+    }
+
+    /// Same issue under another ID.
+    pub fn is_alias_of(&self, other: &Advisory) -> bool {
+        self.aliases.contains(&other.id) || other.aliases.contains(&self.id)
+    }
 }
 
 #[derive(Deserialize)]
@@ -120,6 +139,28 @@ struct Vuln {
     #[serde(default)]
     severity: Vec<VulnSeverity>,
     database_specific: Option<serde_json::Value>,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    affected: Vec<Affected>,
+}
+
+#[derive(Deserialize)]
+struct Affected {
+    database_specific: Option<serde_json::Value>,
+}
+
+impl Vuln {
+    /// RustSec puts `informational` per affected package.
+    fn informational(&self) -> Option<String> {
+        self.affected.iter().find_map(|a| {
+            a.database_specific
+                .as_ref()?
+                .get("informational")?
+                .as_str()
+                .map(str::to_owned)
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -258,6 +299,7 @@ impl OsvClient {
         }
         let vuln: Vuln = response.json().await?;
         let (severity, severity_basis) = severity_of(&vuln);
+        let informational = vuln.informational();
         let summary = vuln
             .summary
             .filter(|s| !s.trim().is_empty())
@@ -272,6 +314,8 @@ impl OsvClient {
             severity,
             severity_basis,
             published: vuln.published,
+            aliases: vuln.aliases,
+            informational,
         };
         self.advisories
             .lock()

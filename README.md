@@ -65,6 +65,7 @@ Estimates are not alerts, and the dashboard doesn't pretend otherwise:
 
 - Dependencies without a concrete version are skipped and counted. Lockfiles resolve versions, manifests often don't, and pnpm's `catalog:` references don't either; asking OSV about a package without a version would return every advisory ever published for it.
 - Severity comes from GitHub's own label where the advisory was reviewed by GitHub, so it matches what Dependabot would say. Otherwise it's the CVSS v3 base score, computed with the formula from the 3.1 specification, and failing that, medium. Each estimate notes which of the three it was.
+- OSV often lists the same issue twice, as a RustSec entry and as its GitHub advisory twin. Those count once, under the GitHub one. RustSec's maintenance notices ("crate X is unmaintained") are left out, as Dependabot does; unsoundness reports stay, since they are about memory safety.
 - An estimate is fixed when a later SBOM no longer contains an affected version. Whether the project shipped a release with that fix is another question that the SBOM can't answer.
 
 By default this covers external repositories only; `collector.osv.scope = "without_dependabot"` extends it to tracked repositories with Dependabot disabled.

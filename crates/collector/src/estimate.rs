@@ -2,7 +2,7 @@
 //! read: dependencies from GitHub's SBOM export, checked against OSV.
 
 use crate::alerts::Tracked;
-use crate::osv::{Dependency, OsvClient};
+use crate::osv::{Advisory, Dependency, OsvClient};
 use crate::{Collector, Error, record};
 use chrono::Utc;
 use serde::Deserialize;
@@ -56,6 +56,21 @@ fn alert_number(advisory: &str, package: &str) -> i64 {
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     (hash & ((1 << 53) - 1)) as i64
+}
+
+/// Drops maintenance notices and keeps one advisory per issue: OSV lists a
+/// RUSTSEC entry and its GHSA twin separately. The one carrying GitHub's
+/// severity label wins, so estimates match what Dependabot would report.
+fn distinct_vulnerabilities(mut advisories: Vec<Advisory>) -> Vec<Advisory> {
+    advisories.retain(Advisory::is_vulnerability);
+    advisories.sort_by_key(|a| a.severity_basis != "GitHub");
+    let mut kept: Vec<Advisory> = Vec::new();
+    for advisory in advisories {
+        if !kept.iter().any(|k| k.is_alias_of(&advisory)) {
+            kept.push(advisory);
+        }
+    }
+    kept
 }
 
 impl Collector {
@@ -133,14 +148,14 @@ impl Collector {
             let mut records: Vec<AlertRecord> = Vec::new();
             let mut failed = None;
             for (dep, ids) in deps.iter().zip(affected) {
+                let mut advisories = Vec::with_capacity(ids.len());
                 for id in ids {
-                    let advisory = match osv.advisory(&id).await {
-                        Ok(advisory) => advisory,
-                        Err(e) => {
-                            failed = Some(e.to_string());
-                            continue;
-                        }
-                    };
+                    match osv.advisory(&id).await {
+                        Ok(advisory) => advisories.push(advisory),
+                        Err(e) => failed = Some(e.to_string()),
+                    }
+                }
+                for advisory in distinct_vulnerabilities(advisories) {
                     let number = alert_number(&advisory.id, &dep.package);
                     let location = format!("{}@{}", dep.package, dep.version);
                     // Several affected versions of one package: one alert.
@@ -240,6 +255,47 @@ impl Collector {
 mod tests {
     use super::*;
     use assert2::check;
+
+    fn advisory(id: &str, basis: &str, aliases: &[&str], informational: Option<&str>) -> Advisory {
+        Advisory {
+            id: id.into(),
+            summary: String::new(),
+            severity: store::Severity::Medium,
+            severity_basis: basis.into(),
+            published: None,
+            aliases: aliases.iter().map(|a| a.to_string()).collect(),
+            informational: informational.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn keeps_one_advisory_per_issue_and_drops_notices() {
+        let kept = distinct_vulnerabilities(vec![
+            advisory(
+                "RUSTSEC-2026-0285",
+                "CVSS 5.3",
+                &["GHSA-2mjx-qc3c-rqvc"],
+                None,
+            ),
+            advisory(
+                "GHSA-2mjx-qc3c-rqvc",
+                "GitHub",
+                &["RUSTSEC-2026-0285"],
+                None,
+            ),
+            advisory("RUSTSEC-2026-0251", "unknown", &[], Some("unmaintained")),
+            advisory("RUSTSEC-2026-0255", "unknown", &[], Some("unsound")),
+            advisory("RUSTSEC-2026-0346", "CVSS 4.0", &[], None),
+        ]);
+        let ids: Vec<_> = kept.iter().map(|a| a.id.as_str()).collect();
+        check!(
+            ids == [
+                "GHSA-2mjx-qc3c-rqvc",
+                "RUSTSEC-2026-0255",
+                "RUSTSEC-2026-0346"
+            ]
+        );
+    }
 
     #[test]
     fn alert_numbers_are_stable_and_version_independent() {
