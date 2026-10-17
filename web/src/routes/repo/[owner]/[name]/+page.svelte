@@ -130,7 +130,7 @@
 						<tr>
 							<th>Severity</th>
 							<th>Alert</th>
-							<th>Location</th>
+							<th class="location-col">Location</th>
 							<th>Opened</th>
 							<th>State</th>
 						</tr>
@@ -145,8 +145,9 @@
 									<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 									<a href={alert.html_url} target="_blank" rel="noreferrer">{alert.title}</a>
 									{#if alert.estimated}<span class="tag">estimated</span>{/if}
+									{#if alert.location}<span class="location-inline">{alert.location}</span>{/if}
 								</td>
-								<td class="location">{alert.location ?? '—'}</td>
+								<td class="location location-col">{alert.location ?? '—'}</td>
 								<td class="nowrap">{formatDate(alert.created_at)}</td>
 								<td class="nowrap">
 									{alert.state}
@@ -323,10 +324,29 @@
 		color: var(--ink);
 	}
 
-	.location {
+	.location,
+	.location-inline {
 		color: var(--ink-secondary);
 		font-size: 0.9rem;
-		overflow-wrap: anywhere;
+		overflow-wrap: break-word;
+	}
+
+	.location-inline {
+		display: none;
+	}
+
+	/* Narrow screens: the location moves under the title instead of
+	   squeezing a column that would break paths mid-word. */
+	@media (max-width: 640px) {
+		.location-col {
+			display: none;
+		}
+
+		.location-inline {
+			display: block;
+			margin-top: 0.15rem;
+			font-size: 0.8rem;
+		}
 	}
 
 	.nowrap {
