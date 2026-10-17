@@ -366,3 +366,27 @@ async fn teams_workflows_get_an_adaptive_card_as_cloudevent() {
     check!(body["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive");
     check!(body["attachments"][0]["content"]["type"] == "AdaptiveCard");
 }
+
+#[tokio::test]
+async fn a_digest_of_exactly_the_cap_is_not_truncated() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let (store, repo, run) = store_with_repo().await;
+    for number in 1..=3 {
+        open(&store, repo, run, number, Severity::Medium, false).await;
+    }
+    let (mut config, env) = config(&server);
+    config.targets.retain(|t| t.name == "knative");
+    let service = DigestService::new(Arc::clone(&store), config, env)
+        .unwrap()
+        .with_event_cap(3);
+
+    service.send_now(Utc::now()).await;
+    let digest = &bodies(&server.received_requests().await.unwrap(), "/hook")[0];
+    check!(digest["events"] == 3);
+    check!(digest["truncated"] == false);
+    check!(digest["headline"] == "3 new alerts");
+}

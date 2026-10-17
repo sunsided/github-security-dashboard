@@ -195,15 +195,19 @@ impl DigestService {
         };
         // Oldest first: if the cap cuts, it cuts the newest events, and the
         // watermark (the last event included) leaves them for next time.
-        let events = self
+        // One more than fits tells whether anything is left over: exactly
+        // `max_events` events are a full digest, not a truncated one.
+        let mut events = self
             .store
             .alert_events(&EventFilter {
-                limit: self.max_events,
+                limit: self.max_events + 1,
                 include_baseline: false,
                 oldest_first: true,
                 ..filter
             })
             .await?;
+        let truncated = events.len() > self.max_events as usize;
+        events.truncate(self.max_events as usize);
         let totals = self.totals().await?;
         let digest = Digest::build(
             &events,
@@ -213,7 +217,7 @@ impl DigestService {
             self.config.dashboard_url.clone(),
         )
         .map(|mut d| {
-            d.truncated = events.len() as u32 >= self.max_events;
+            d.truncated = truncated;
             d
         });
         Ok((digest, watermark))
