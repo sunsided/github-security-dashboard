@@ -3,6 +3,7 @@
 	import {
 		SEVERITIES,
 		SOURCE_LABELS,
+		hasAlertNumber,
 		type AlertSource,
 		type RepoSource,
 		type SourceStatus
@@ -28,12 +29,15 @@
 		repo?.sources.some((s) => s.status === 'skipped' && s.message === 'archived') ?? false
 	);
 
-	const sourceOrder: AlertSource[] = ['dependabot', 'code_scanning', 'secret_scanning'];
+	const sourceOrder: AlertSource[] = ['dependabot', 'code_scanning', 'secret_scanning', 'osv'];
 	const sources = $derived(
-		sourceOrder.map((source) => ({
-			source,
-			status: repo?.sources.find((s) => s.source === source) as RepoSource | undefined
-		}))
+		sourceOrder
+			.map((source) => ({
+				source,
+				status: repo?.sources.find((s) => s.source === source) as RepoSource | undefined
+			}))
+			// Estimates only run for some repositories; don't list them as pending elsewhere.
+			.filter(({ source, status }) => source !== 'osv' || status)
 	);
 
 	const statusText: Record<SourceStatus, string> = {
@@ -166,7 +170,10 @@
 							<tr class:closed={alert.state !== 'open'}>
 								<td><SeverityBadge severity={alert.severity} /></td>
 								<td>
-									<span class="source">{SOURCE_LABELS[alert.source]} #{alert.number}</span>
+									<span class="source"
+										>{SOURCE_LABELS[alert.source]}{#if hasAlertNumber(alert.source)}
+											#{alert.number}{/if}</span
+									>
 									<!-- External link to GitHub, not an app route. -->
 									<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 									<a href={alert.html_url} target="_blank" rel="noreferrer">{alert.title}</a>

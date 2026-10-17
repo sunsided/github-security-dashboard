@@ -57,6 +57,18 @@ A **GitHub App** is the better fit for anything that runs unattended. It isn't t
 
 Owners without an installation, typically external repositories, still need a token from somewhere. If `GITHUB_TOKEN` is set, it is used for those; otherwise the server borrows the oldest installation's token, which is enough to read public repositories. Alerts of repositories you don't administer are out of reach either way; that's what the planned OSV estimate is for.
 
+## Estimated alerts for external repositories
+
+GitHub shows a repository's security alerts only to the people who administer it, so for the projects I depend on but don't own, the Security tab is simply not mine to read. Their dependency graph is public, though. For those repositories the collector downloads GitHub's SBOM export, queries [OSV](https://osv.dev) for every dependency with an exact version, and records each hit as an alert flagged *estimated*.
+
+Estimates are not alerts, and the dashboard doesn't pretend otherwise:
+
+- Dependencies without a concrete version are skipped and counted. Lockfiles resolve versions, manifests often don't, and pnpm's `catalog:` references don't either; asking OSV about a package without a version would return every advisory ever published for it.
+- Severity comes from GitHub's own label where the advisory was reviewed by GitHub, so it matches what Dependabot would say. Otherwise it's the CVSS v3 base score, computed with the formula from the 3.1 specification, and failing that, medium. Each estimate notes which of the three it was.
+- An estimate is fixed when a later SBOM no longer contains an affected version. Whether the project shipped a release with that fix is another question that the SBOM can't answer.
+
+By default this covers external repositories only; `collector.osv.scope = "without_dependabot"` extends it to tracked repositories with Dependabot disabled.
+
 ## Status
 
 Work in progress. The plan, roughly in order:
@@ -64,7 +76,7 @@ Work in progress. The plan, roughly in order:
 1. ~~Workspace scaffold, configuration, personal access token auth, repository stats via GraphQL, pluggable storage with an SQLite backend, and a minimal table UI.~~ Done.
 2. ~~Alerts from Dependabot, code scanning and secret scanning (organization-wide endpoints where possible, per repository otherwise), severity scoring and a detail page.~~ Done.
 3. ~~GitHub App authentication.~~ Done.
-4. External repositories: when I can't read their alerts (GitHub only shows them to admins and security managers), the server pulls the dependency SBOM and matches it against [OSV](https://osv.dev). Those numbers are labeled as estimates, because that's what they are.
+4. ~~External repositories: when I can't read their alerts (GitHub only shows them to admins and security managers), the server pulls the dependency SBOM and matches it against [OSV](https://osv.dev). Those numbers are labeled as estimates, because that's what they are.~~ Done.
 5. A PostgreSQL backend for keeping the audit history long term.
 6. A digest of newly opened alerts by email or Slack.
 

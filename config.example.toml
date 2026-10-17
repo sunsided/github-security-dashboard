@@ -51,6 +51,16 @@ skip_forks = true
 # GitHub gives leaked secrets no severity; this is the one they get here.
 secret_severity = "critical"
 
+[collector.osv]
+# Repositories whose Dependabot alerts the token can't read (typically
+# external ones) get estimated alerts: dependencies from GitHub's SBOM export
+# checked against https://osv.dev. Marked "estimated" in the UI.
+enabled = true
+# "external", or "without_dependabot" to include tracked repositories with
+# Dependabot disabled.
+scope = "external"
+api_url = "https://api.osv.dev"
+
 [scoring]
 # Risk score = sum of open alerts weighted by severity.
 critical = 10

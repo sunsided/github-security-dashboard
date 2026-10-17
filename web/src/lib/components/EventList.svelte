@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { SOURCE_LABELS, type AlertEvent, type EventKind } from '#lib/api.js';
+	import { SOURCE_LABELS, hasAlertNumber, type AlertEvent, type EventKind } from '#lib/api.js';
 	import { describeEvent, formatDateTime } from '#lib/format.js';
 
 	interface Props {
@@ -38,7 +38,8 @@
 							{event.owner}/{event.repo}</a
 						>:
 					{/if}
-					{SOURCE_LABELS[event.source]} #{event.number}
+					{SOURCE_LABELS[event.source]}{#if hasAlertNumber(event.source)}
+						#{event.number}{/if}
 					<span class="title">{event.title}</span>
 				</span>
 				<span class="change">{describeEvent(event.kind, event.old, event.new, event.baseline)}</span
