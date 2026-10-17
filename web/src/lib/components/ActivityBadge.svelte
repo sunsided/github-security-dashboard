@@ -25,6 +25,9 @@
 
 <style>
 	.badge {
+		/* Containing block for the hidden label, which would otherwise escape
+		   the table's scroll container and widen the page. */
+		position: relative;
 		display: inline-flex;
 		align-items: baseline;
 		gap: 0.35rem;
