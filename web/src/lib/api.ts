@@ -180,6 +180,30 @@ export const getEvents = (fetch: Fetch, limit = 200, includeBaseline = false) =>
 export const getRuns = (fetch: Fetch, limit = 50) =>
 	getJson<Run[]>(fetch, `/api/runs?limit=${limit}`);
 
+export interface Delivery {
+	id: number;
+	target: string;
+	attempted_at: string;
+	first_event_id: number;
+	last_event_id: number;
+	/** 0 for a day without news (recorded, nothing sent). */
+	events: number;
+	succeeded: boolean;
+	error: string | null;
+}
+
+/** Recent digest deliveries; `null` while the digest is disabled. */
+export async function getDeliveries(fetch: Fetch): Promise<Delivery[] | null> {
+	const response = await fetch('/api/digest/deliveries', {
+		headers: { accept: 'application/json' }
+	});
+	if (response.status === 404) return null;
+	if (!response.ok) {
+		throw new Error(`/api/digest/deliveries: ${response.status} ${response.statusText}`);
+	}
+	return response.json() as Promise<Delivery[]>;
+}
+
 /** Asks the server for a collector run as soon as possible. */
 export async function requestRefresh(): Promise<void> {
 	const response = await fetch('/api/refresh', {
