@@ -5,7 +5,10 @@
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::sync::Arc;
-use store::{RepoFilter, RepoInfo, RepoKind, RepoStats, RunStatus, Store};
+use store::{
+    AlertFilter, AlertRecord, AlertSource, AlertState, EventFilter, EventKind, RepoFilter,
+    RepoInfo, RepoKind, RepoStats, RunStatus, Severity, SourceStatus, Store,
+};
 
 fn t0() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).unwrap()
@@ -213,6 +216,251 @@ pub async fn list_filters(store: Arc<dyn Store>) {
     assert_eq!(names(external), ["rust-lang/cargo"]);
 }
 
+fn alert(number: i64, state: AlertState, severity: Severity) -> AlertRecord {
+    AlertRecord {
+        source: AlertSource::Dependabot,
+        number,
+        state,
+        severity,
+        title: format!("advisory {number}"),
+        location: Some("serde_json".into()),
+        html_url: format!("https://github.com/acme/widget/security/dependabot/{number}"),
+        created_at: t0() - Duration::days(1),
+        closed_at: None,
+        estimated: false,
+    }
+}
+
+pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
+    let run1 = store.begin_run(t0()).await.unwrap();
+    let repo = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run1)
+        .await
+        .unwrap();
+
+    let opened = store
+        .record_alerts(
+            repo,
+            run1,
+            t0(),
+            &[
+                alert(1, AlertState::Open, Severity::High),
+                alert(2, AlertState::Open, Severity::Low),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(opened, 2);
+
+    let overview = store.get_repo("acme", "widget").await.unwrap().unwrap();
+    assert_eq!(
+        (overview.open_alerts.high, overview.open_alerts.low),
+        (1, 1)
+    );
+    assert_eq!(overview.open_alerts.total(), 2);
+
+    // Seeing the same state again changes nothing.
+    let run2 = store.begin_run(t0() + Duration::hours(1)).await.unwrap();
+    let unchanged = store
+        .record_alerts(
+            repo,
+            run2,
+            t0() + Duration::hours(1),
+            &[
+                alert(1, AlertState::Open, Severity::High),
+                alert(2, AlertState::Open, Severity::Low),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(unchanged, 0);
+
+    let run3 = store.begin_run(t0() + Duration::hours(2)).await.unwrap();
+    let mut fixed = alert(2, AlertState::Fixed, Severity::Low);
+    fixed.closed_at = Some(t0() + Duration::hours(2));
+    let changed = store
+        .record_alerts(
+            repo,
+            run3,
+            t0() + Duration::hours(2),
+            &[alert(1, AlertState::Open, Severity::Critical), fixed],
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed, 2);
+
+    let overview = store.get_repo("acme", "widget").await.unwrap().unwrap();
+    assert_eq!(overview.open_alerts.critical, 1);
+    assert_eq!(overview.open_alerts.total(), 1);
+
+    let open = store
+        .list_alerts(
+            repo,
+            &AlertFilter {
+                state: Some(AlertState::Open),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].record.severity, Severity::Critical);
+    assert_eq!(open[0].first_seen_run, run1);
+    assert_eq!(open[0].last_seen_run, run3);
+
+    let all = store
+        .list_alerts(repo, &AlertFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].record.state, AlertState::Open, "open alerts first");
+    assert_eq!(all[1].record.closed_at, Some(t0() + Duration::hours(2)));
+
+    let events = store
+        .alert_events(&EventFilter {
+            repo: Some(repo),
+            since: None,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    let kinds: Vec<_> = events.iter().map(|e| (e.number, e.kind)).collect();
+    assert_eq!(
+        kinds,
+        [
+            (2, EventKind::Fixed),
+            (1, EventKind::SeverityChanged),
+            (2, EventKind::Opened),
+            (1, EventKind::Opened),
+        ]
+    );
+    assert_eq!(events[1].old.as_deref(), Some("high"));
+    assert_eq!(events[1].new.as_deref(), Some("critical"));
+    assert_eq!(
+        (events[0].owner.as_str(), events[0].repo.as_str()),
+        ("acme", "widget")
+    );
+
+    let recent = store
+        .alert_events(&EventFilter {
+            repo: None,
+            since: Some(t0() + Duration::minutes(90)),
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(recent.len(), 2);
+}
+
+pub async fn alerts_are_scoped_by_repo_and_source(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let a = store
+        .upsert_repo(&repo("acme", "a", RepoKind::Org), run)
+        .await
+        .unwrap();
+    let b = store
+        .upsert_repo(&repo("acme", "b", RepoKind::Org), run)
+        .await
+        .unwrap();
+
+    let mut secret = alert(1, AlertState::Open, Severity::Critical);
+    secret.source = AlertSource::SecretScanning;
+    store
+        .record_alerts(
+            a,
+            run,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::High), secret],
+        )
+        .await
+        .unwrap();
+    store
+        .record_alerts(
+            b,
+            run,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::Medium)],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .list_alerts(a, &AlertFilter::default())
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let only_secrets = store
+        .list_alerts(
+            a,
+            &AlertFilter {
+                source: Some(AlertSource::SecretScanning),
+                state: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(only_secrets.len(), 1);
+    assert_eq!(only_secrets[0].record.severity, Severity::Critical);
+
+    let repos = store.list_repos(&RepoFilter::default()).await.unwrap();
+    assert_eq!(repos[0].open_alerts.total(), 2);
+    assert_eq!(repos[1].open_alerts.medium, 1);
+}
+
+pub async fn source_status_is_upserted(store: Arc<dyn Store>) {
+    let run = store.begin_run(t0()).await.unwrap();
+    let id = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run)
+        .await
+        .unwrap();
+    store
+        .set_source_status(
+            id,
+            AlertSource::CodeScanning,
+            run,
+            t0(),
+            SourceStatus::Unavailable,
+            Some("no analysis"),
+        )
+        .await
+        .unwrap();
+    store
+        .set_source_status(
+            id,
+            AlertSource::Dependabot,
+            run,
+            t0(),
+            SourceStatus::Ok,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_source_status(
+            id,
+            AlertSource::CodeScanning,
+            run,
+            t0() + Duration::hours(1),
+            SourceStatus::Ok,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let statuses = store.source_statuses(id).await.unwrap();
+    assert_eq!(statuses.len(), 2);
+    let code = statuses
+        .iter()
+        .find(|s| s.source == AlertSource::CodeScanning)
+        .unwrap();
+    assert_eq!(code.status, SourceStatus::Ok);
+    assert_eq!(code.message, None);
+    assert_eq!(code.checked_at, t0() + Duration::hours(1));
+}
+
 macro_rules! contract_tests {
     ($backend:ident, $open:expr) => {
         mod $backend {
@@ -250,6 +498,21 @@ macro_rules! contract_tests {
             #[tokio::test]
             async fn list_filters() {
                 super::list_filters(open().await).await
+            }
+
+            #[tokio::test]
+            async fn alert_lifecycle_is_audited() {
+                super::alert_lifecycle_is_audited(open().await).await
+            }
+
+            #[tokio::test]
+            async fn alerts_are_scoped_by_repo_and_source() {
+                super::alerts_are_scoped_by_repo_and_source(open().await).await
+            }
+
+            #[tokio::test]
+            async fn source_status_is_upserted() {
+                super::source_status_is_upserted(open().await).await
             }
         }
     };
