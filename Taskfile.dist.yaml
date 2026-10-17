@@ -4,7 +4,6 @@
 version: '3'
 
 dotenv:
-  - .env.local
   - .env
 
 vars:
@@ -25,7 +24,7 @@ tasks:
       - test -f {{.CONFIG}}
     cmds:
       - cp config.example.toml {{.CONFIG}}
-      - echo "Created {{.CONFIG}}; set GITHUB_TOKEN in .env.local or your shell."
+      - echo "Created {{.CONFIG}}; set GITHUB_TOKEN in .env (see .env.example) or your shell."
 
   build:
     desc: Build the workspace (PROFILE=release for an optimized binary)
