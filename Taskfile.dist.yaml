@@ -6,10 +6,14 @@ version: '3'
 dotenv:
   - .env
 
+includes:
+  web:
+    taskfile: web/Taskfile.dist.yaml
+    dir: web
+
 vars:
   PROFILE: '{{ .PROFILE | default "debug" }}'
   PROFILE_FLAG: '{{ if eq .PROFILE "release" }}--release{{ end }}'
-  PROFILE_DIR: '{{ if eq .PROFILE "release" }}release{{ else }}debug{{ end }}'
   CONFIG: '{{ .CONFIG | default "config.toml" }}'
 
 tasks:
@@ -19,33 +23,63 @@ tasks:
     silent: true
 
   setup:
-    desc: Create a local config.toml from the example
+    desc: Create config.toml and .env from the examples, install UI dependencies
+    cmds:
+      - task: setup:config
+      - task: web:install
+
+  setup:config:
+    internal: true
     status:
       - test -f {{.CONFIG}}
+      - test -f .env
     cmds:
-      - cp config.example.toml {{.CONFIG}}
-      - echo "Created {{.CONFIG}}; set GITHUB_TOKEN in .env (see .env.example) or your shell."
+      - test -f {{.CONFIG}} || cp config.example.toml {{.CONFIG}}
+      - test -f .env || cp .env.example .env
+      - echo "Edit {{.CONFIG}} (owners to track) and .env (GITHUB_TOKEN)."
 
-  build:
-    desc: Build the workspace (PROFILE=release for an optimized binary)
+  dev:
+    desc: Run the server and the Vite dev server side by side (UI on :5173)
+    deps: [run, web:dev]
+
+  run:
+    desc: Run the server (collector + API + UI on :8080)
     preconditions:
       - &cargo
         sh: command -v cargo
         msg: "cargo not found — install Rust from https://rustup.rs/"
-    cmds:
-      - cargo build --workspace --all-targets {{.PROFILE_FLAG}}
-
-  run:
-    desc: Run the server (collector + API + UI)
-    preconditions:
-      - *cargo
-      - sh: test -f {{.CONFIG}}
+      - &config
+        sh: test -f {{.CONFIG}}
         msg: "{{.CONFIG}} not found — run: task setup"
     cmds:
       - cargo run {{.PROFILE_FLAG}} --bin server -- --config {{.CONFIG}} {{.CLI_ARGS}}
 
+  collect:
+    desc: Run the collector once and exit
+    preconditions:
+      - *cargo
+      - *config
+    cmds:
+      - cargo run {{.PROFILE_FLAG}} --bin server -- --config {{.CONFIG}} --once
+
+  build:
+    desc: Build the workspace (PROFILE=release for optimized code)
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo build --workspace --all-targets {{.PROFILE_FLAG}}
+
+  build:release:
+    desc: Build the UI and a release server binary with the UI embedded
+    deps: [web:build]
+    preconditions:
+      - *cargo
+    cmds:
+      - cargo build --release --bin server
+      - echo "Binary at target/release/server"
+
   test:
-    desc: Run all tests
+    desc: Run all tests (Rust + UI)
     aliases: [t]
     preconditions:
       - *cargo
@@ -53,6 +87,7 @@ tasks:
       RUST_LOG: '{{ .RUST_LOG | default "off" }}'
     cmds:
       - cargo test --workspace {{.CLI_ARGS}}
+      - task: web:test
 
   fmt:
     desc: Format all code
@@ -61,6 +96,7 @@ tasks:
       - *cargo
     cmds:
       - cargo fmt --all
+      - task: web:fmt
 
   lint:
     desc: Lint all code (warnings are errors)
@@ -68,27 +104,33 @@ tasks:
       - *cargo
     cmds:
       - cargo clippy --workspace --all-targets -- -D warnings
+      - task: web:lint
 
   lint:fix:
-    desc: Apply clippy suggestions and reformat
+    desc: Apply lint fixes and reformat
     aliases: [fix]
     preconditions:
       - *cargo
     cmds:
       - cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
-      - task: fmt
+      - cargo fmt --all
+      - task: web:lint:fix
 
   check:
-    desc: All static checks (format, lint)
+    desc: All static checks (format, lint, type-check)
+    preconditions:
+      - *cargo
     cmds:
       - cargo fmt --all --check
       - task: lint
+      - task: web:check
 
   ci:
-    desc: Everything CI runs (checks + tests)
+    desc: Everything CI runs (checks + tests + UI build)
     cmds:
       - task: check
       - task: test
+      - task: web:build
 
   docs:
     desc: Build API docs for the workspace
@@ -105,8 +147,7 @@ tasks:
       - cargo doc --workspace --no-deps --open
 
   clean:
-    desc: Remove build artifacts
-    status:
-      - test ! -d target
+    desc: Remove build artifacts (Rust + UI)
+    deps: [web:clean]
     cmds:
       - cargo clean

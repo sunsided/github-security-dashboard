@@ -24,3 +24,5 @@
 # Task
 /Taskfile.yaml
 /Taskfile.yml
+/.task/
+/web/.task/
