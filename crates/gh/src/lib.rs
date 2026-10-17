@@ -44,6 +44,15 @@ pub enum Error {
 }
 
 impl Error {
+    /// GitHub's own explanation where there is one ("Code scanning is not
+    /// enabled for this repository."), the full error otherwise.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Status { message, .. } if !message.is_empty() => message.clone(),
+            other => other.to_string(),
+        }
+    }
+
     /// `403` or `404`, i.e. the token can't see this resource or the feature
     /// is disabled for the repository.
     pub fn is_inaccessible(&self) -> bool {

@@ -200,7 +200,7 @@ async fn tracks_alert_lifecycle_across_runs() {
         .find(|s| s.source == AlertSource::CodeScanning)
         .unwrap();
     assert_eq!(code.status, SourceStatus::Unavailable);
-    assert!(code.message.as_deref().unwrap().contains("not enabled"));
+    assert_eq!(code.message.as_deref(), Some("Code scanning is not enabled"));
 
     // Run 2: alert #2 is no longer listed; GitHub says it was fixed.
     server.reset().await;

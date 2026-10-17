@@ -108,7 +108,7 @@ impl Collector {
                         fallback.extend(org_repos.iter().copied());
                     }
                     Err(e) => {
-                        let message = e.to_string();
+                        let message = e.reason();
                         record(errors, format!("{source} alerts of {org}"), e);
                         for repo in org_repos {
                             self.status(run, repo, source, SourceStatus::Error, Some(&message))
@@ -135,12 +135,12 @@ impl Collector {
                 match result {
                     Ok(open) => self.apply(run, repo, source, open, errors).await?,
                     Err(e) if e.is_inaccessible() => {
-                        let message = e.to_string();
+                        let message = e.reason();
                         self.status(run, repo, source, SourceStatus::Unavailable, Some(&message))
                             .await?;
                     }
                     Err(e) => {
-                        let message = e.to_string();
+                        let message = e.reason();
                         record(
                             errors,
                             format!("{source} alerts of {}/{}", repo.owner, repo.name),
