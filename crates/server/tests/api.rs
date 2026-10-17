@@ -246,3 +246,54 @@ async fn event_feed_spans_repositories() {
     .await;
     check!(none.as_array().unwrap().len() == 0);
 }
+
+#[tokio::test]
+async fn repositories_missing_from_the_latest_run_are_marked_and_left_out_of_totals() {
+    let state = seeded_state().await;
+    // A later run sees only "fresh"; "dusty" (with its alerts) drops out.
+    let later = Utc::now() + Duration::hours(1);
+    let run = state.store.begin_run(later).await.unwrap();
+    let fresh = state
+        .store
+        .get_repo("acme", "fresh")
+        .await
+        .unwrap()
+        .unwrap();
+    state.store.upsert_repo(&fresh.info, run).await.unwrap();
+    state
+        .store
+        .finish_run(run, later, RunStatus::Succeeded, None, &[])
+        .await
+        .unwrap();
+
+    let (_, repos) = call(state.clone(), "GET", "/api/repos").await;
+    let refreshed = |name: &str| {
+        repos
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()["refreshed"]
+            .clone()
+    };
+    check!(refreshed("fresh") == true);
+    check!(refreshed("dusty") == false);
+
+    let (_, summary) = call(state.clone(), "GET", "/api/summary").await;
+    check!(summary["repos"] == 1);
+    check!(summary["not_refreshed"] == 1);
+    check!(
+        summary["repos_with_alerts"] == 0,
+        "dusty's alerts are no longer counted"
+    );
+    check!(summary["open_alerts"]["critical"] == 0);
+
+    // A run still in progress does not make anything look outdated.
+    state
+        .store
+        .begin_run(later + Duration::hours(1))
+        .await
+        .unwrap();
+    let (_, summary) = call(state, "GET", "/api/summary").await;
+    check!(summary["not_refreshed"] == 1);
+}
