@@ -1,0 +1,24 @@
+# Development PostgreSQL for the dashboard and its postgres contract tests.
+# Loopback only, on a non-default port so it doesn't collide with a local
+# PostgreSQL. Start with `task db:up`.
+name: github-security-dashboard
+
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: dashboard
+      POSTGRES_DB: dashboard
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard -d dashboard"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres-data:

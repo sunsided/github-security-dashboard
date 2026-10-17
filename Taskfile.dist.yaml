@@ -15,6 +15,8 @@ vars:
   PROFILE: '{{ .PROFILE | default "debug" }}'
   PROFILE_FLAG: '{{ if eq .PROFILE "release" }}--release{{ end }}'
   CONFIG: '{{ .CONFIG | default "config.toml" }}'
+  # The compose database (task db:up); override for another server.
+  DATABASE_URL_PG: '{{ .DATABASE_URL_PG | default "postgres://dashboard:dashboard@127.0.0.1:54329/dashboard" }}'
 
 tasks:
   default:
@@ -88,6 +90,40 @@ tasks:
     cmds:
       - cargo test --workspace {{.CLI_ARGS}}
       - task: web:test
+
+  test:postgres:
+    desc: Run the storage contract tests against PostgreSQL (needs task db:up)
+    preconditions:
+      - *cargo
+      - sh: psql "{{.DATABASE_URL_PG}}" -c 'select 1' >/dev/null 2>&1
+        msg: "PostgreSQL not reachable at {{.DATABASE_URL_PG}} — run: task db:up"
+    env:
+      DATABASE_URL_PG: '{{.DATABASE_URL_PG}}'
+    cmds:
+      - cargo test -p store --features postgres {{.CLI_ARGS}}
+
+  db:up:
+    desc: Start the development PostgreSQL (127.0.0.1:54329)
+    preconditions:
+      - &docker
+        sh: command -v docker
+        msg: "docker not found — install from https://docker.com"
+    cmds:
+      - docker compose up -d --wait postgres
+      - 'echo "PostgreSQL ready: {{.DATABASE_URL_PG}}"'
+
+  db:down:
+    desc: Stop the development PostgreSQL (keeps its data)
+    preconditions:
+      - *docker
+    cmds:
+      - docker compose down
+
+  db:psql:
+    desc: Open psql on the development PostgreSQL
+    interactive: true
+    cmds:
+      - psql "{{.DATABASE_URL_PG}}"
 
   fmt:
     desc: Format all code

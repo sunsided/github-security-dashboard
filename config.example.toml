@@ -12,6 +12,8 @@ allowed_hosts = []
 poll_interval = "30m"
 
 [storage]
+# SQLite file, or PostgreSQL for long-term retention of the audit history:
+# url = "postgres://dashboard:dashboard@127.0.0.1:54329/dashboard"  (task db:up)
 url = "sqlite://dashboard.db"
 
 [auth]
