@@ -25,4 +25,4 @@ Work in progress. The plan, roughly in order:
 
 ## License
 
-Not decided yet.
+Licensed under the [European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2).
