@@ -1,4 +1,8 @@
-//! One collection pass: GitHub in, store snapshots out.
+//! One collection pass: GitHub in, store snapshots and alerts out.
+
+mod alerts;
+
+pub use alerts::AlertsConfig;
 
 use chrono::Utc;
 use gh::{GitHub, OwnerKind, Repository};
@@ -57,6 +61,7 @@ pub struct CollectorConfig {
     pub page_size: u32,
     /// Parallel REST requests.
     pub concurrency: usize,
+    pub alerts: AlertsConfig,
 }
 
 impl Default for CollectorConfig {
@@ -66,6 +71,7 @@ impl Default for CollectorConfig {
             external_repos: Vec::new(),
             page_size: 25,
             concurrency: 8,
+            alerts: AlertsConfig::default(),
         }
     }
 }
@@ -184,13 +190,24 @@ impl Collector {
         let contributors = self.contributor_counts(&repos, errors).await;
 
         let taken_at = Utc::now();
+        let mut tracked = Vec::with_capacity(repos.len());
         for ((kind, repo), contributors) in repos.iter().zip(contributors) {
             let id = self.store.upsert_repo(&repo_info(*kind, repo), run).await?;
             self.store
                 .insert_snapshot(id, run, taken_at, &repo_stats(repo, contributors))
                 .await?;
+            tracked.push(alerts::Tracked {
+                id,
+                kind: *kind,
+                owner: repo.owner.clone(),
+                name: repo.name.clone(),
+                archived: repo.archived,
+                fork: repo.fork,
+            });
         }
-        Ok(repos.len())
+
+        self.collect_alerts(run, &tracked, errors).await?;
+        Ok(tracked.len())
     }
 
     /// Contributor counts in input order, fetched in parallel.
