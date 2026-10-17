@@ -249,7 +249,7 @@ mod tests {
             "[digest]\nenabled = true",
             "[digest]\nat = \"8 am\"",
             "[digest]\ntimezone = \"Mars/Olympus\"",
-            "[digest]\nenabled = true\n[[digest.targets]]\nname = \"x\"\nkind = \"teams\"\nurl_env = \"X\"",
+            "[digest]\nenabled = true\n[[digest.targets]]\nname = \"x\"\nkind = \"carrier-pigeon\"\nurl_env = \"X\"",
         ] {
             let text = format!("[collector]\nowners = [\"a\"]\n{broken}");
             check!(Config::parse(&text).is_err(), "{broken}");

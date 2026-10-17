@@ -76,7 +76,7 @@ By default this covers external repositories only; `collector.osv.scope = "witho
 
 The dashboard is only useful if someone looks at it, and the reason this project exists is that nobody was telling me about new alerts. So once a day the server sends a digest of what changed: alerts opened or reopened (most severe first, with links), severities that went up, alerts that were fixed or dismissed, and the totals as they stand. A day without changes sends nothing.
 
-Targets are Slack incoming webhooks and plain JSON webhooks:
+Targets are Slack incoming webhooks, Microsoft Teams Workflows webhooks (the template "Post to a channel when a webhook request is received", which takes an Adaptive Card), and plain JSON webhooks:
 
 ```toml
 [digest]
@@ -95,7 +95,7 @@ kind = "json"
 url_env = "DIGEST_WEBHOOK_URL"
 ```
 
-Every request is a [CloudEvent](https://cloudevents.io) in binary content mode, with the `ce-*` attributes as headers and the payload as body, so it can go straight into Knative Eventing or any other CloudEvents consumer. JSON targets get `ce-type: <prefix>.digest.v1` with the digest as versioned JSON; Slack gets `<prefix>.digest.slack.v1` with a Block Kit message (and ignores the headers). The `ce-id` is derived from the target and the range of events covered, so a retried delivery can be recognized as the same event.
+Every request is a [CloudEvent](https://cloudevents.io) in binary content mode, with the `ce-*` attributes as headers and the payload as body, so it can go straight into Knative Eventing or any other CloudEvents consumer. JSON targets get `ce-type: <prefix>.digest.v1` with the digest as versioned JSON; Slack gets `<prefix>.digest.slack.v1` with a Block Kit message, Teams `<prefix>.digest.teams.v1` with an Adaptive Card (both ignore the headers). The `ce-id` is derived from the target and the range of events covered, so a retried delivery can be recognized as the same event.
 
 Each target keeps its own watermark in the database. A failed delivery leaves its events for the next digest, a newly added target starts with the last 24 hours rather than the whole history, and a server that was down at digest time catches up when it starts. `task digest:send` sends a digest right away, which is the quickest way to see whether a webhook works; `GET /api/digest/preview` shows what the next one would contain without sending anything.
 

@@ -18,8 +18,8 @@ pub struct DigestConfig {
     pub dashboard_url: Option<String>,
     /// CloudEvents `source` attribute (a URI reference).
     pub event_source: String,
-    /// Prefix of the CloudEvents `type` attribute; `.digest.v1` (JSON) or
-    /// `.digest.slack.v1` (Slack message) is appended.
+    /// Prefix of the CloudEvents `type` attribute; `.digest.v1` (JSON),
+    /// `.digest.slack.v1` (Slack) or `.digest.teams.v1` (Teams) is appended.
     pub event_type_prefix: String,
     /// Alerts listed per section before "and N more".
     pub max_items: usize,
@@ -58,6 +58,9 @@ pub enum TargetKind {
     Slack,
     /// Any webhook; the body is the digest as JSON.
     Json,
+    /// Microsoft Teams Workflows webhook ("Post to a channel when a webhook
+    /// request is received"); the body is a message with an Adaptive Card.
+    Teams,
 }
 
 impl DigestConfig {

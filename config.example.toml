@@ -81,7 +81,7 @@ timezone = "Europe/Berlin"
 # Linked from the digest; omit if the dashboard isn't reachable for readers.
 # dashboard_url = "https://security.example.org"
 # CloudEvents attributes: ce-source, and the ce-type prefix (".digest.v1" for
-# JSON targets, ".digest.slack.v1" for Slack is appended).
+# JSON, ".digest.slack.v1" for Slack, ".digest.teams.v1" for Teams is appended).
 event_source = "/github-security-dashboard"
 event_type_prefix = "io.github.sunsided.security-dashboard"
 # Alerts listed per section before "...and N more".
@@ -92,6 +92,13 @@ max_items = 15
 # name = "slack"
 # kind = "slack"            # Slack incoming webhook (Block Kit message)
 # url_env = "SLACK_WEBHOOK_URL"
+#
+# [[digest.targets]]
+# name = "teams"
+# kind = "teams"            # Teams Workflows webhook (Adaptive Card), from the
+#                           # template "Post to a channel when a webhook request
+#                           # is received"
+# url_env = "TEAMS_WEBHOOK_URL"
 #
 # [[digest.targets]]
 # name = "events"

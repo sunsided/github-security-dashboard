@@ -44,13 +44,13 @@ fn source_label(source: AlertSource) -> &'static str {
     }
 }
 
-/// A URL safe to put into Slack's `<url|text>` link syntax: http(s) only,
-/// and nothing that could end the link early (`|`, `>`) or start a new one.
-fn slack_link_target(url: &str) -> Option<&str> {
+/// A URL safe to put into a chat link: http(s) only, and nothing that
+/// could end Slack's `<url|text>` or Markdown's `[text](url)` early.
+fn link_target(url: &str) -> Option<&str> {
     let allowed_scheme = url.starts_with("https://") || url.starts_with("http://");
     let clean = !url
         .chars()
-        .any(|c| matches!(c, '<' | '>' | '|') || c.is_whitespace() || c.is_control());
+        .any(|c| matches!(c, '<' | '>' | '|' | '(' | ')') || c.is_whitespace() || c.is_control());
     (allowed_scheme && clean).then_some(url)
 }
 
@@ -61,7 +61,7 @@ fn line(item: &Item) -> String {
         format!(" · {}", item.change)
     };
     let repository = escape(&item.repository);
-    let target = match slack_link_target(&item.url) {
+    let target = match link_target(&item.url) {
         Some(url) => format!("<{url}|{repository}>"),
         None => repository,
     };
@@ -154,6 +154,113 @@ pub fn slack(digest: &Digest, timezone: Tz, max_items: usize) -> Value {
     })
 }
 
+/// Text for Adaptive Card Markdown: brackets would start a link of their
+/// own, emphasis markers are harmless and kept.
+fn card_text(text: &str) -> String {
+    text.replace('[', "(").replace(']', ")")
+}
+
+fn card_line(item: &Item) -> String {
+    let change = if item.change == "opened" {
+        String::new()
+    } else {
+        format!(" · {}", item.change)
+    };
+    let repository = card_text(&item.repository);
+    let target = match link_target(&item.url) {
+        Some(url) => format!("[{repository}]({url})"),
+        None => repository,
+    };
+    format!(
+        "{} **{}** {target}: {} _({}{})_",
+        glyph(item.severity),
+        item.severity,
+        card_text(&item.title),
+        source_label(item.source),
+        change
+    )
+}
+
+fn text_block(text: String) -> Value {
+    json!({ "type": "TextBlock", "text": text, "wrap": true })
+}
+
+fn card_section(title: &str, items: &[Item], max_items: usize) -> Vec<Value> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let mut blocks = vec![json!({
+        "type": "TextBlock", "text": title, "weight": "Bolder", "spacing": "Medium", "wrap": true
+    })];
+    blocks.extend(items.iter().take(max_items).map(|i| {
+        let mut block = text_block(card_line(i));
+        block["spacing"] = json!("Small");
+        block
+    }));
+    if items.len() > max_items {
+        blocks.push(text_block(format!("…and {} more", items.len() - max_items)));
+    }
+    blocks
+}
+
+/// A Microsoft Teams message with an Adaptive Card, as the Workflows
+/// template "Post to a channel when a webhook request is received" expects.
+pub fn teams(digest: &Digest, timezone: Tz, max_items: usize) -> Value {
+    let period = format!(
+        "{} – {}",
+        digest
+            .period_start
+            .with_timezone(&timezone)
+            .format("%-d %b %H:%M"),
+        digest
+            .period_end
+            .with_timezone(&timezone)
+            .format("%-d %b %H:%M %Z"),
+    );
+    let mut body = vec![
+        json!({ "type": "TextBlock", "text": "Security digest", "size": "Large", "weight": "Bolder" }),
+        json!({ "type": "TextBlock", "text": card_text(&digest.headline()), "weight": "Bolder", "wrap": true }),
+        json!({ "type": "TextBlock", "text": period, "isSubtle": true, "spacing": "None", "wrap": true }),
+    ];
+    body.extend(card_section("New", &digest.new, max_items));
+    body.extend(card_section(
+        "Severity raised",
+        &digest.escalated,
+        max_items,
+    ));
+
+    let open = &digest.totals.open_alerts;
+    let closed = &digest.closed;
+    let mut facts = Vec::new();
+    if closed.fixed + closed.dismissed + closed.gone > 0 {
+        facts.push(json!({ "title": "Closed", "value": format!(
+            "{} fixed, {} dismissed, {} gone", closed.fixed, closed.dismissed, closed.gone) }));
+    }
+    facts.push(json!({ "title": "Open now", "value": format!(
+        "{} critical, {} high, {} medium, {} low in {} repositories",
+        open.critical, open.high, open.medium, open.low, digest.totals.repositories_with_alerts) }));
+    body.push(json!({ "type": "FactSet", "facts": facts, "spacing": "Medium" }));
+
+    let mut card = json!({
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.4",
+        "body": body,
+    });
+    if let Some(url) = digest.dashboard_url.as_deref().and_then(link_target) {
+        card["actions"] =
+            json!([{ "type": "Action.OpenUrl", "title": "Open dashboard", "url": url }]);
+    }
+    json!({
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "contentUrl": null,
+            "content": card
+        }]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +317,45 @@ mod tests {
         check!(!new.contains("<!channel>"));
         check!(!new.contains("javascript:"));
         check!(new.contains("▲ *high* acme/api: advisory 1"), "{new}");
+    }
+
+    #[test]
+    fn teams_message_wraps_an_adaptive_card() {
+        let mut opened = event(
+            1,
+            EventKind::Opened,
+            Severity::Critical,
+            None,
+            Some("critical"),
+        );
+        opened.title = "Link [bait](https://evil.example)".into();
+        let mut odd = event(2, EventKind::Opened, Severity::Low, None, Some("low"));
+        odd.html_url = "https://example.org/a)b".into();
+        let message = teams(&digest(&[opened, odd]), chrono_tz::Europe::Berlin, 15);
+
+        check!(message["type"] == "message");
+        let attachment = &message["attachments"][0];
+        check!(attachment["contentType"] == "application/vnd.microsoft.card.adaptive");
+        let card = &attachment["content"];
+        check!(card["type"] == "AdaptiveCard");
+        check!(card["version"] == "1.4");
+        let texts: Vec<&str> = card["body"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|b| b["text"].as_str())
+            .collect();
+        check!(texts.contains(&"2 new alerts (1 critical)"));
+        check!(texts.iter().any(|t| t.starts_with(
+            "◆ **critical** [acme/api](https://github.com/acme/api/security/dependabot/1): Link (bait)(https://evil.example)"
+        )), "{texts:?}");
+        check!(
+            texts
+                .iter()
+                .any(|t| t.starts_with("● **low** acme/api: advisory 2")),
+            "unsafe URLs aren't linked"
+        );
+        check!(card["actions"][0]["url"] == "https://dashboard.example");
     }
 
     #[test]

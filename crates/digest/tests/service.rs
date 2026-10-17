@@ -322,3 +322,47 @@ async fn capped_digests_continue_where_they_stopped() {
         "nothing lost"
     );
 }
+
+#[tokio::test]
+async fn teams_workflows_get_an_adaptive_card_as_cloudevent() {
+    let server = MockServer::start().await;
+    // Teams Workflows accept with 202.
+    Mock::given(method("POST"))
+        .and(path("/teams"))
+        .and(header(
+            "ce-type",
+            "io.github.sunsided.security-dashboard.digest.teams.v1",
+        ))
+        .and(header("ce-specversion", "1.0"))
+        .respond_with(ResponseTemplate::new(202))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (store, repo, run) = store_with_repo().await;
+    open(&store, repo, run, 1, Severity::Critical, false).await;
+    let config = DigestConfig {
+        enabled: true,
+        targets: vec![TargetConfig {
+            name: "teams".into(),
+            kind: TargetKind::Teams,
+            url_env: "TEAMS".into(),
+        }],
+        ..DigestConfig::default()
+    };
+    let base = server.uri();
+    let service = DigestService::new(Arc::clone(&store), config, move |_| {
+        Some(format!("{base}/teams"))
+    })
+    .unwrap();
+
+    check!(
+        service.send_now(Utc::now()).await
+            == [Outcome::Sent {
+                target: "teams".into(),
+                events: 1
+            }]
+    );
+    let body = &bodies(&server.received_requests().await.unwrap(), "/teams")[0];
+    check!(body["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive");
+    check!(body["attachments"][0]["content"]["type"] == "AdaptiveCard");
+}

@@ -267,6 +267,10 @@ impl DigestService {
                 render::slack(&digest, self.config.timezone, self.config.max_items),
                 "digest.slack.v1",
             ),
+            TargetKind::Teams => (
+                render::teams(&digest, self.config.timezone, self.config.max_items),
+                "digest.teams.v1",
+            ),
         };
         let event = CloudEvent {
             // Same events, same ID: a retried delivery can be deduplicated.
