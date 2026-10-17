@@ -25,6 +25,13 @@
 	}: Props = $props();
 
 	const max = $derived(Math.max(1, ...buckets.map((b) => b.total)));
+
+	/** Wide enough that every severity present stays visible, even when the
+	 * bucket is tiny next to the largest one: 4px per segment plus gaps. */
+	function minWidth(bucket: Bucket): string {
+		const segments = SEVERITIES.filter((s) => bucket.counts[s] > 0).length;
+		return `${segments * 4 + Math.max(0, segments - 1) * 2}px`;
+	}
 	let hovered = $state<string | null>(null);
 	let showTable = $state(false);
 </script>
@@ -49,7 +56,11 @@
 					>
 						<span class="label">{label(bucket.key)}</span>
 						<span class="track">
-							<span class="bar" style:width="{(bucket.total / max) * 100}%">
+							<span
+								class="bar"
+								style:width="{(bucket.total / max) * 100}%"
+								style:min-width={minWidth(bucket)}
+							>
 								{#each SEVERITIES as severity (severity)}
 									{#if bucket.counts[severity] > 0}
 										<span class="segment {severity}" style:flex-grow={bucket.counts[severity]}
@@ -192,7 +203,6 @@
 		display: flex;
 		gap: 2px;
 		height: 14px;
-		min-width: 4px;
 		/* Square at the baseline, rounded at the data end. */
 		border-radius: 0 4px 4px 0;
 		overflow: hidden;
@@ -201,7 +211,7 @@
 	.segment {
 		display: block;
 		flex-basis: 0;
-		min-width: 2px;
+		min-width: 4px;
 	}
 
 	.critical {
