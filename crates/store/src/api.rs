@@ -173,6 +173,10 @@ pub trait Store: Send + Sync {
         baseline: bool,
     ) -> Result<usize>;
 
+    /// Every open alert of every repository, with the repository's owner,
+    /// name, archived flag and last run seen.
+    async fn list_open_alerts(&self) -> Result<Vec<OpenAlert>>;
+
     /// Alerts of a repository, most severe first.
     async fn list_alerts(&self, repo: RepoId, filter: &AlertFilter) -> Result<Vec<Alert>>;
 

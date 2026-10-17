@@ -54,6 +54,8 @@ async fn seeded_state() -> AppState {
                 created_at: now,
                 closed_at: None,
                 estimated: false,
+                advisory_ids: Vec::new(),
+                ecosystem: None,
             };
             store
                 .record_alerts(
