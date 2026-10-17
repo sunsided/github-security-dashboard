@@ -245,6 +245,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
                 alert(1, AlertState::Open, Severity::High),
                 alert(2, AlertState::Open, Severity::Low),
             ],
+            false,
         )
         .await
         .unwrap();
@@ -265,6 +266,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
                 alert(1, AlertState::Open, Severity::High),
                 alert(2, AlertState::Open, Severity::Low),
             ],
+            false,
         )
         .await
         .unwrap();
@@ -279,6 +281,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
             run3,
             t0() + Duration::hours(2),
             &[alert(1, AlertState::Open, Severity::Critical), fixed],
+            false,
         )
         .await
         .unwrap();
@@ -316,6 +319,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
             repo: Some(repo),
             since: None,
             limit: 10,
+            include_baseline: false,
         })
         .await
         .unwrap();
@@ -338,6 +342,7 @@ pub async fn alert_lifecycle_is_audited(store: Arc<dyn Store>) {
             repo: None,
             since: Some(t0() + Duration::minutes(90)),
             limit: 10,
+            include_baseline: false,
         })
         .await
         .unwrap();
@@ -363,6 +368,7 @@ pub async fn alerts_are_scoped_by_repo_and_source(store: Arc<dyn Store>) {
             run,
             t0(),
             &[alert(1, AlertState::Open, Severity::High), secret],
+            false,
         )
         .await
         .unwrap();
@@ -372,6 +378,7 @@ pub async fn alerts_are_scoped_by_repo_and_source(store: Arc<dyn Store>) {
             run,
             t0(),
             &[alert(1, AlertState::Open, Severity::Medium)],
+            false,
         )
         .await
         .unwrap();
@@ -453,6 +460,103 @@ pub async fn source_status_is_upserted(store: Arc<dyn Store>) {
     check!(code.checked_at == t0() + Duration::hours(1));
 }
 
+pub async fn baseline_events_are_filtered_on_request(store: Arc<dyn Store>) {
+    let run1 = store.begin_run(t0()).await.unwrap();
+    let repo = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run1)
+        .await
+        .unwrap();
+    store
+        .record_alerts(
+            repo,
+            run1,
+            t0(),
+            &[alert(1, AlertState::Open, Severity::High)],
+            true,
+        )
+        .await
+        .unwrap();
+    let run2 = store.begin_run(t0() + Duration::hours(1)).await.unwrap();
+    store
+        .record_alerts(
+            repo,
+            run2,
+            t0() + Duration::hours(1),
+            &[
+                alert(1, AlertState::Open, Severity::High),
+                alert(2, AlertState::Open, Severity::Low),
+            ],
+            false,
+        )
+        .await
+        .unwrap();
+
+    let news = store
+        .alert_events(&EventFilter {
+            repo: None,
+            since: None,
+            limit: 10,
+            include_baseline: false,
+        })
+        .await
+        .unwrap();
+    check!(news.len() == 1);
+    check!(news[0].number == 2);
+    check!(!news[0].baseline);
+
+    let all = store
+        .alert_events(&EventFilter {
+            repo: Some(repo),
+            since: None,
+            limit: 10,
+            include_baseline: true,
+        })
+        .await
+        .unwrap();
+    check!(all.len() == 2);
+    check!(let Some(first) = all.last() && first.baseline && first.number == 1);
+}
+
+pub async fn first_collected_run_survives_failures(store: Arc<dyn Store>) {
+    let run1 = store.begin_run(t0()).await.unwrap();
+    let id = store
+        .upsert_repo(&repo("acme", "widget", RepoKind::Org), run1)
+        .await
+        .unwrap();
+    let source = AlertSource::Dependabot;
+    store
+        .set_source_status(
+            id,
+            source,
+            run1,
+            t0(),
+            SourceStatus::Unavailable,
+            Some("off"),
+        )
+        .await
+        .unwrap();
+    let first = |statuses: Vec<store::RepoSource>| statuses[0].first_collected_run;
+    check!(first(store.source_statuses(id).await.unwrap()) == None);
+
+    let run2 = store.begin_run(t0() + Duration::hours(1)).await.unwrap();
+    store
+        .set_source_status(id, source, run2, t0(), SourceStatus::Ok, None)
+        .await
+        .unwrap();
+    let run3 = store.begin_run(t0() + Duration::hours(2)).await.unwrap();
+    store
+        .set_source_status(id, source, run3, t0(), SourceStatus::Error, Some("503"))
+        .await
+        .unwrap();
+    let run4 = store.begin_run(t0() + Duration::hours(3)).await.unwrap();
+    store
+        .set_source_status(id, source, run4, t0(), SourceStatus::Ok, None)
+        .await
+        .unwrap();
+
+    check!(first(store.source_statuses(id).await.unwrap()) == Some(run2));
+}
+
 macro_rules! contract_tests {
     ($backend:ident, $open:expr) => {
         mod $backend {
@@ -505,6 +609,16 @@ macro_rules! contract_tests {
             #[tokio::test]
             async fn source_status_is_upserted() {
                 super::source_status_is_upserted(open().await).await
+            }
+
+            #[tokio::test]
+            async fn baseline_events_are_filtered_on_request() {
+                super::baseline_events_are_filtered_on_request(open().await).await
+            }
+
+            #[tokio::test]
+            async fn first_collected_run_survives_failures() {
+                super::first_collected_run_survives_failures(open().await).await
             }
         }
     };

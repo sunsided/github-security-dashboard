@@ -346,6 +346,7 @@ impl Store for SqliteStore {
         run: RunId,
         at: DateTime<Utc>,
         alerts: &[AlertRecord],
+        baseline: bool,
     ) -> Result<usize> {
         let mut tx = self.pool.begin().await?;
         let mut events = 0;
@@ -398,8 +399,8 @@ impl Store for SqliteStore {
 
             for change in alerts::changes(previous.as_ref().map(|a| &a.record), alert) {
                 sqlx::query(
-                    "INSERT INTO alert_events (alert_id, run_id, at, kind, old, new)
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO alert_events (alert_id, run_id, at, kind, old, new, baseline)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(id)
                 .bind(run.0)
@@ -407,6 +408,7 @@ impl Store for SqliteStore {
                 .bind(change.kind.as_str())
                 .bind(change.old)
                 .bind(change.new)
+                .bind(baseline)
                 .execute(&mut *tx)
                 .await?;
                 events += 1;
@@ -435,18 +437,20 @@ impl Store for SqliteStore {
 
     async fn alert_events(&self, filter: &EventFilter) -> Result<Vec<AlertEvent>> {
         let rows = sqlx::query(
-            "SELECT e.id, e.alert_id, e.run_id, e.at, e.kind, e.old, e.new,
+            "SELECT e.id, e.alert_id, e.run_id, e.at, e.kind, e.old, e.new, e.baseline,
                     r.owner, r.name AS repo, a.source, a.number, a.title
              FROM alert_events e
              JOIN alerts a ON a.id = e.alert_id
              JOIN repos r ON r.id = a.repo_id
              WHERE (?1 IS NULL OR a.repo_id = ?1) AND (?2 IS NULL OR e.at >= ?2)
+               AND (?4 OR e.baseline = 0)
              ORDER BY e.id DESC
              LIMIT ?3",
         )
         .bind(filter.repo.map(|r| r.0))
         .bind(filter.since)
         .bind(i64::from(filter.limit))
+        .bind(filter.include_baseline)
         .fetch_all(&self.pool)
         .await?;
 
@@ -460,6 +464,7 @@ impl Store for SqliteStore {
                     kind: parse(row, "kind")?,
                     old: row.try_get("old")?,
                     new: row.try_get("new")?,
+                    baseline: row.try_get("baseline")?,
                     owner: row.try_get("owner")?,
                     repo: row.try_get("repo")?,
                     source: parse(row, "source")?,
@@ -480,13 +485,15 @@ impl Store for SqliteStore {
         message: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO repo_sources (repo_id, source, status, message, checked_at, run_id)
-             VALUES (?, ?, ?, ?, ?, ?)
+            "INSERT INTO repo_sources (repo_id, source, status, message, checked_at, run_id,
+                                      first_ok_run)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?3 = 'ok' THEN ?6 END)
              ON CONFLICT (repo_id, source) DO UPDATE SET
                  status = excluded.status,
                  message = excluded.message,
                  checked_at = excluded.checked_at,
-                 run_id = excluded.run_id",
+                 run_id = excluded.run_id,
+                 first_ok_run = COALESCE(repo_sources.first_ok_run, excluded.first_ok_run)",
         )
         .bind(repo.0)
         .bind(source.as_str())
@@ -501,7 +508,7 @@ impl Store for SqliteStore {
 
     async fn source_statuses(&self, repo: RepoId) -> Result<Vec<RepoSource>> {
         let rows = sqlx::query(
-            "SELECT source, status, message, checked_at FROM repo_sources
+            "SELECT source, status, message, checked_at, first_ok_run FROM repo_sources
              WHERE repo_id = ? ORDER BY source",
         )
         .bind(repo.0)
@@ -514,6 +521,7 @@ impl Store for SqliteStore {
                     status: parse(row, "status")?,
                     message: row.try_get("message")?,
                     checked_at: row.try_get("checked_at")?,
+                    first_collected_run: row.try_get::<Option<i64>, _>("first_ok_run")?.map(RunId),
                 })
             })
             .collect()
@@ -559,7 +567,10 @@ mod tests {
             closed_at: None,
             estimated: false,
         };
-        store.record_alerts(repo, run, now, &[alert]).await.unwrap();
+        store
+            .record_alerts(repo, run, now, &[alert], false)
+            .await
+            .unwrap();
 
         for sql in [
             "UPDATE alert_events SET kind = 'fixed'",

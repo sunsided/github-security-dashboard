@@ -103,6 +103,9 @@ pub struct AlertEvent {
     pub kind: EventKind,
     pub old: Option<String>,
     pub new: Option<String>,
+    /// Recorded when the source was first read for this repository, i.e.
+    /// describes a pre-existing alert rather than a change.
+    pub baseline: bool,
     // Denormalized for display.
     pub owner: String,
     pub repo: String,
@@ -116,6 +119,8 @@ pub struct EventFilter {
     pub repo: Option<RepoId>,
     pub since: Option<DateTime<Utc>>,
     pub limit: u32,
+    /// Also return baseline events (see [`AlertEvent::baseline`]).
+    pub include_baseline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +129,8 @@ pub struct RepoSource {
     pub status: SourceStatus,
     pub message: Option<String>,
     pub checked_at: DateTime<Utc>,
+    /// First run that read this source successfully; kept across failures.
+    pub first_collected_run: Option<RunId>,
 }
 
 /// Open alerts per severity.

@@ -60,6 +60,7 @@ async fn seeded_state() -> AppState {
                     run,
                     now,
                     &[alert(1, Severity::Critical), alert(2, Severity::Low)],
+                    false,
                 )
                 .await
                 .unwrap();
@@ -228,6 +229,7 @@ async fn repository_detail_lists_alerts_and_events() {
 
 #[tokio::test]
 async fn event_feed_spans_repositories() {
+    // The seeded alerts are ordinary (non-baseline) events.
     let (status, body) = call(seeded_state().await, "GET", "/api/events?limit=1").await;
     check!(status == StatusCode::OK);
     let events = body.as_array().unwrap();

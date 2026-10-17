@@ -160,14 +160,16 @@ pub trait Store: Send + Sync {
     async fn snapshot_history(&self, repo: RepoId, limit: u32) -> Result<Vec<Snapshot>>;
 
     /// Stores the observed state of alerts of one repository and appends an
-    /// audit event for every change, atomically. Returns the number of
-    /// events written.
+    /// audit event for every change, atomically. `baseline` flags the events
+    /// as describing pre-existing alerts (first read of a source). Returns
+    /// the number of events written.
     async fn record_alerts(
         &self,
         repo: RepoId,
         run: RunId,
         at: DateTime<Utc>,
         alerts: &[AlertRecord],
+        baseline: bool,
     ) -> Result<usize>;
 
     /// Alerts of a repository, most severe first.

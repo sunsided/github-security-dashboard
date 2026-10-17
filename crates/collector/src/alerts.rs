@@ -242,8 +242,20 @@ impl Collector {
             }
         }
 
+        // Alerts found the first time a source can be read already existed;
+        // their events are flagged so they don't read as news.
+        let baseline = !self
+            .store
+            .source_statuses(repo.id)
+            .await?
+            .iter()
+            .any(|s| s.source == source && s.first_collected_run.is_some());
+
         let at = Utc::now();
-        let events = self.store.record_alerts(repo.id, run, at, &records).await?;
+        let events = self
+            .store
+            .record_alerts(repo.id, run, at, &records, baseline)
+            .await?;
         if events > 0 {
             tracing::info!(repo = %format!("{}/{}", repo.owner, repo.name), ?source, events, "alerts changed");
         }

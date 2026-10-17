@@ -271,11 +271,20 @@ async fn tracks_alert_lifecycle_across_runs() {
             repo: Some(api.id),
             since: None,
             limit: 10,
+            include_baseline: true,
         })
         .await
         .unwrap();
     check!(events[0].kind == EventKind::Fixed);
     check!(events[0].number == 2);
+    check!(!events[0].baseline, "a fix in a later run is news");
+    check!(
+        events
+            .iter()
+            .filter(|e| e.kind == EventKind::Opened)
+            .all(|e| e.baseline),
+        "alerts found on the first read are baseline"
+    );
     check!(
         events
             .iter()

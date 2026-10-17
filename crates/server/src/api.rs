@@ -142,6 +142,9 @@ async fn get_repo(
             repo: Some(repo.id),
             since: None,
             limit: 100,
+            // A repository's history starts with what was there when it was
+            // first collected.
+            include_baseline: true,
         })
         .await?;
     let detail = RepoDetail {
@@ -176,6 +179,10 @@ struct EventsQuery {
     since: Option<DateTime<Utc>>,
     #[serde(default = "default_events_limit")]
     limit: u32,
+    /// Include events describing alerts that existed when a source was
+    /// first collected.
+    #[serde(default)]
+    include_baseline: bool,
 }
 
 fn default_events_limit() -> u32 {
@@ -191,6 +198,7 @@ async fn list_events(
         repo: None,
         since: query.since,
         limit: query.limit.min(1000),
+        include_baseline: query.include_baseline,
     };
     Ok(Json(state.store.alert_events(&filter).await?))
 }
