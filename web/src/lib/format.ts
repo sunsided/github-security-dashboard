@@ -52,9 +52,15 @@ export function formatDuration(from: string, to: string | null): string {
 }
 
 /** Short description of an alert event, e.g. "severity high → critical". */
-export function describeEvent(kind: string, old: string | null, next: string | null): string {
+export function describeEvent(
+	kind: string,
+	old: string | null,
+	next: string | null,
+	baseline = false
+): string {
 	switch (kind) {
 		case 'opened':
+			if (baseline) return next ? `first seen as ${next}` : 'first seen';
 			return next ? `opened as ${next}` : 'opened';
 		case 'reopened':
 			return old ? `reopened (was ${old})` : 'reopened';

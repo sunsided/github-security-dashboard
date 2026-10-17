@@ -41,6 +41,7 @@ describe('formatDuration', () => {
 describe('describeEvent', () => {
 	it('names the transition', () => {
 		expect(describeEvent('opened', null, 'high')).toBe('opened as high');
+		expect(describeEvent('opened', null, 'high', true)).toBe('first seen as high');
 		expect(describeEvent('severity_changed', 'high', 'critical')).toBe('severity high → critical');
 		expect(describeEvent('reopened', 'dismissed', 'open')).toBe('reopened (was dismissed)');
 		expect(describeEvent('fixed', 'open', 'fixed')).toBe('fixed');

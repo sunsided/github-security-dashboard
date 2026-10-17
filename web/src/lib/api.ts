@@ -79,6 +79,8 @@ export interface AlertEvent {
 	kind: EventKind;
 	old: string | null;
 	new: string | null;
+	/** Alert already existed when its source was first collected. */
+	baseline: boolean;
 	owner: string;
 	repo: string;
 	source: AlertSource;
@@ -91,6 +93,7 @@ export interface RepoSource {
 	status: SourceStatus;
 	message: string | null;
 	checked_at: string;
+	first_collected_run: number | null;
 }
 
 export interface RepoDetail extends Repo {
@@ -158,8 +161,11 @@ export async function getRepo(
 	return response.json() as Promise<RepoDetail>;
 }
 
-export const getEvents = (fetch: Fetch, limit = 200) =>
-	getJson<AlertEvent[]>(fetch, `/api/events?limit=${limit}`);
+export const getEvents = (fetch: Fetch, limit = 200, includeBaseline = false) =>
+	getJson<AlertEvent[]>(
+		fetch,
+		`/api/events?limit=${limit}${includeBaseline ? '&include_baseline=true' : ''}`
+	);
 
 export const getRuns = (fetch: Fetch, limit = 50) =>
 	getJson<Run[]>(fetch, `/api/runs?limit=${limit}`);

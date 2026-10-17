@@ -5,11 +5,13 @@
 
 	interface Props {
 		events: AlertEvent[];
+		/** Shown when there are no events. */
+		empty?: string;
 		/** Show which repository each event belongs to. */
 		showRepo?: boolean;
 	}
 
-	let { events, showRepo = false }: Props = $props();
+	let { events, showRepo = false, empty = 'No alert changes recorded yet.' }: Props = $props();
 
 	// Good news, bad news, and everything else get distinct glyphs.
 	const glyphs: Record<EventKind, string> = {
@@ -23,12 +25,12 @@
 </script>
 
 {#if events.length === 0}
-	<p class="empty">No alert changes recorded yet.</p>
+	<p class="empty">{empty}</p>
 {:else}
 	<ol class="events">
 		{#each events as event (event.id)}
-			<li class={event.kind}>
-				<span class="glyph" aria-hidden="true">{glyphs[event.kind]}</span>
+			<li class={event.kind} class:baseline={event.baseline}>
+				<span class="glyph" aria-hidden="true">{event.baseline ? '·' : glyphs[event.kind]}</span>
 				<span class="when">{formatDateTime(event.at)}</span>
 				<span class="what">
 					{#if showRepo}
@@ -39,7 +41,8 @@
 					{SOURCE_LABELS[event.source]} #{event.number}
 					<span class="title">{event.title}</span>
 				</span>
-				<span class="change">{describeEvent(event.kind, event.old, event.new)}</span>
+				<span class="change">{describeEvent(event.kind, event.old, event.new, event.baseline)}</span
+				>
 			</li>
 		{/each}
 	</ol>
@@ -85,6 +88,16 @@
 
 	.fixed .glyph {
 		color: var(--good);
+	}
+
+	/* Pre-existing alerts: listed, but not news. */
+	.baseline .glyph,
+	.opened.baseline .glyph {
+		color: var(--ink-muted);
+	}
+
+	.baseline .change {
+		color: var(--ink-muted);
 	}
 
 	.when {
