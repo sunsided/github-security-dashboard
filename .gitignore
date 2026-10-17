@@ -1,0 +1,22 @@
+# Rust
+/target/
+
+# Frontend
+/web/node_modules/
+/web/.svelte-kit/
+/web/build/
+/web/.yarn/*
+!/web/.yarn/releases
+!/web/.yarn/plugins
+
+# Local config, secrets and data
+/config.toml
+*.pem
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# Tooling caches
+/_catalog/
+/_dereferenced/
