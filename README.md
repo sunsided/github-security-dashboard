@@ -8,6 +8,14 @@ This exists because GitHub shows Dependabot, code scanning and secret scanning a
 
 The idea is simple: a small Rust server polls the GitHub API on a schedule, normalizes alerts into critical, high, medium and low, keeps snapshots in a database, and serves a SvelteKit UI that sorts repositories by how much attention they need. Next to the alerts it records the usual health signals: open issues and pull requests, contributors, commit count, tags and releases, and how long ago anyone last committed.
 
+## Before you run it
+
+The dashboard knows exactly where your repositories are weakest, and it doesn't ask who's looking. There is no login yet: the API and the UI answer anyone who can reach them. What they do guard against is other websites, through a host allowlist, a request header browsers won't send cross-site, and an origin check on the live-update socket.
+
+That's fine on `localhost`, which is where the server listens by default. Anywhere else, put it behind something that authenticates (an OAuth proxy, your ingress' single sign-on) and add the public hostname to `allowed_hosts`. When a login does arrive, it will sit in front of the token endpoint for live updates (see [Live updates](#live-updates)), so the rest of the server won't need to change.
+
+On the GitHub side it only ever reads: a token or App with the read-only permissions listed under [Authentication](#authentication) is all it gets.
+
 ## Getting started
 
 You'll need Rust (1.88 or newer), Node.js with corepack enabled (`corepack enable`, which provides the pinned Yarn 4) and [Task](https://taskfile.dev). Then:
@@ -122,7 +130,11 @@ Work in progress. The plan, roughly in order:
 
 - **Storage is pluggable.** The application talks to a `Store` trait; SQLite is the default, PostgreSQL the choice for keeping the audit history somewhere with backups and a retention policy. `storage.url` decides (`sqlite://dashboard.db` or `postgres://…`), and both backends pass the same contract test suite. Snapshots and alert state changes are append-only, enforced by triggers in both databases (PostgreSQL also refuses `TRUNCATE`), so "what was open on March 3rd" stays answerable.
 - **Rate limits are respected.** The client honors `x-ratelimit-*` and `retry-after` headers and uses conditional requests where GitHub supports them.
-- **No authentication in v1.** The server binds to `127.0.0.1` by default. The data it holds is a list of your weak spots, so please don't expose it as-is.
+- **No authentication yet.** The server binds to `127.0.0.1` by default; see [Before you run it](#before-you-run-it) for running it anywhere else.
+
+## Contributing
+
+This is a personal project that grew out of my own itch, built in the open because others seem to have the same one. Issues and pull requests are welcome; answers may take a while, and there are no promises about features or timelines. Security problems in the dashboard itself go through [SECURITY.md](SECURITY.md), not the issue tracker.
 
 ## License
 
