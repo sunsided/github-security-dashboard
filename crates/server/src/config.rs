@@ -13,6 +13,10 @@ use std::time::Duration;
 pub struct Config {
     #[serde(default = "default_listen")]
     pub listen: SocketAddr,
+    /// Hostnames besides the loopback ones the server answers to, e.g. when
+    /// a reverse proxy forwards requests for `dashboard.example.org`.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
     #[serde(default = "default_poll_interval", with = "humantime_serde")]
     pub poll_interval: Duration,
     #[serde(default)]

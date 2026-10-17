@@ -42,7 +42,7 @@ pub async fn serve(uri: Uri) -> Response {
     }
 
     // Client-side routing: unknown paths get the SPA shell.
-    match Assets::get("index.html") {
+    match Assets::get("200.html") {
         Some(index) => ([(header::CACHE_CONTROL, "no-cache")], Html(index.data)).into_response(),
         None => (StatusCode::SERVICE_UNAVAILABLE, Html(NOT_BUILT)).into_response(),
     }

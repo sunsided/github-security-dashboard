@@ -5,6 +5,7 @@ use collector::{Collector, CollectorConfig};
 use gh::{ClientConfig, GitHub, PatProvider, Secret};
 use serde_json::Value;
 use server::api::AppState;
+use server::guard::{AllowedHosts, CSRF_HEADER};
 use server::scheduler::Scheduler;
 use std::sync::Arc;
 use store::{RepoInfo, RepoKind, RepoStats, RunStatus};
@@ -69,15 +70,9 @@ async fn seeded_state() -> AppState {
     }
 }
 
-async fn call(state: AppState, method: &str, uri: &str) -> (StatusCode, Value) {
-    let response = server::app(state)
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+async fn send(state: AppState, request: Request<Body>) -> (StatusCode, Value) {
+    let response = server::app(state, AllowedHosts::new(&[]))
+        .oneshot(request)
         .await
         .unwrap();
     let status = response.status();
@@ -86,6 +81,18 @@ async fn call(state: AppState, method: &str, uri: &str) -> (StatusCode, Value) {
         .unwrap();
     let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, json)
+}
+
+/// A same-origin request as the dashboard UI sends it.
+async fn call(state: AppState, method: &str, uri: &str) -> (StatusCode, Value) {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("host", "localhost:8080")
+        .header(CSRF_HEADER, "1")
+        .body(Body::empty())
+        .unwrap();
+    send(state, request).await
 }
 
 #[tokio::test]
@@ -147,4 +154,28 @@ async fn refresh_is_accepted() {
 async fn unknown_api_paths_are_404_not_spa() {
     let (status, _) = call(seeded_state().await, "GET", "/api/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn rejects_foreign_host_names() {
+    // DNS rebinding: evil.example resolves to 127.0.0.1, the Host stays.
+    let request = Request::builder()
+        .uri("/api/repos")
+        .header("host", "evil.example:8080")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(seeded_state().await, request).await;
+    assert_eq!(status, StatusCode::MISDIRECTED_REQUEST);
+}
+
+#[tokio::test]
+async fn refresh_requires_custom_header() {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/refresh")
+        .header("host", "127.0.0.1:8080")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(seeded_state().await, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

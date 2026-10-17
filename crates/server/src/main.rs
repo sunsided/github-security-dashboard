@@ -51,11 +51,15 @@ async fn main() -> anyhow::Result<()> {
     let scheduler = Arc::new(Scheduler::new(collector, config.poll_interval));
     tokio::spawn(Arc::clone(&scheduler).run_forever());
 
-    let app = server::app(AppState {
-        store,
-        github,
-        scheduler,
-    });
+    let allowed_hosts = server::guard::AllowedHosts::new(&config.allowed_hosts);
+    let app = server::app(
+        AppState {
+            store,
+            github,
+            scheduler,
+        },
+        allowed_hosts,
+    );
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("binding {}", config.listen))?;
