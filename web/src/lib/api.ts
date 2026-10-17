@@ -2,6 +2,22 @@
 
 export type RepoKind = 'org' | 'user' | 'external';
 export type RunStatus = 'running' | 'succeeded' | 'partial' | 'failed';
+export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export type AlertSource = 'dependabot' | 'code_scanning' | 'secret_scanning';
+export type AlertState = 'open' | 'fixed' | 'dismissed' | 'gone';
+export type EventKind = 'opened' | 'reopened' | 'severity_changed' | 'fixed' | 'dismissed' | 'gone';
+export type SourceStatus = 'ok' | 'unavailable' | 'skipped' | 'error';
+
+/** Most severe first. */
+export const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
+
+export const SOURCE_LABELS: Record<AlertSource, string> = {
+	dependabot: 'Dependabot',
+	code_scanning: 'Code scanning',
+	secret_scanning: 'Secret scanning'
+};
+
+export type SeverityCounts = Record<Severity, number>;
 
 export interface Snapshot {
 	run_id: number;
@@ -32,8 +48,56 @@ export interface Repo {
 	default_branch: string | null;
 	last_seen_run: number;
 	latest: Snapshot | null;
+	open_alerts: SeverityCounts;
 	days_since_commit: number | null;
 	stale: boolean;
+	risk_score: number;
+}
+
+export interface Alert {
+	id: number;
+	repo_id: number;
+	source: AlertSource;
+	number: number;
+	state: AlertState;
+	severity: Severity;
+	title: string;
+	location: string | null;
+	html_url: string;
+	created_at: string;
+	closed_at: string | null;
+	estimated: boolean;
+	first_seen_run: number;
+	last_seen_run: number;
+}
+
+export interface AlertEvent {
+	id: number;
+	alert_id: number;
+	run_id: number;
+	at: string;
+	kind: EventKind;
+	old: string | null;
+	new: string | null;
+	owner: string;
+	repo: string;
+	source: AlertSource;
+	number: number;
+	title: string;
+}
+
+export interface RepoSource {
+	source: AlertSource;
+	status: SourceStatus;
+	message: string | null;
+	checked_at: string;
+}
+
+export interface RepoDetail extends Repo {
+	history: Snapshot[];
+	alerts: Alert[];
+	sources: RepoSource[];
+	events: AlertEvent[];
 }
 
 export interface Run {
@@ -57,6 +121,8 @@ export interface Summary {
 	open_issues: number;
 	open_prs: number;
 	stale_after_days: number;
+	open_alerts: SeverityCounts;
+	repos_with_alerts: number;
 	collecting: boolean;
 	last_run: Run | null;
 	rate_limits: Record<string, RateLimit>;
@@ -76,6 +142,24 @@ export const getSummary = (fetch: Fetch) => getJson<Summary>(fetch, '/api/summar
 
 export const getRepos = (fetch: Fetch) =>
 	getJson<Repo[]>(fetch, '/api/repos?include_archived=true');
+
+/** `null` if the repository is not tracked. */
+export async function getRepo(
+	fetch: Fetch,
+	owner: string,
+	name: string
+): Promise<RepoDetail | null> {
+	const path = `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+	const response = await fetch(path, { headers: { accept: 'application/json' } });
+	if (response.status === 404) return null;
+	if (!response.ok) {
+		throw new Error(`${path}: ${response.status} ${response.statusText}`);
+	}
+	return response.json() as Promise<RepoDetail>;
+}
+
+export const getEvents = (fetch: Fetch, limit = 200) =>
+	getJson<AlertEvent[]>(fetch, `/api/events?limit=${limit}`);
 
 export const getRuns = (fetch: Fetch, limit = 50) =>
 	getJson<Run[]>(fetch, `/api/runs?limit=${limit}`);

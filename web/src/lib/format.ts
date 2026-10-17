@@ -50,3 +50,24 @@ export function formatDuration(from: string, to: string | null): string {
 	const seconds = Math.round((Date.parse(to) - Date.parse(from)) / 1000);
 	return seconds < 120 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
 }
+
+/** Short description of an alert event, e.g. "severity high → critical". */
+export function describeEvent(kind: string, old: string | null, next: string | null): string {
+	switch (kind) {
+		case 'opened':
+			return next ? `opened as ${next}` : 'opened';
+		case 'reopened':
+			return old ? `reopened (was ${old})` : 'reopened';
+		case 'severity_changed':
+			return `severity ${old ?? '?'} → ${next ?? '?'}`;
+		case 'gone':
+			return 'no longer on GitHub';
+		default:
+			return kind;
+	}
+}
+
+export function formatDate(iso: string | null | undefined): string {
+	if (!iso) return '—';
+	return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
+}
