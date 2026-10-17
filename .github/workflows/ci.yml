@@ -37,7 +37,6 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
-      DATABASE_URL_PG: postgres://dashboard:dashboard@127.0.0.1:54329/dashboard
 
     steps:
       - uses: actions/checkout@v5
@@ -67,5 +66,9 @@ jobs:
 
       # The task checks that the database is reachable first, so these tests
       # can't pass by skipping.
+      # Only this step sees the database URL: with it in the job environment,
+      # task ci's workspace test run would run the PostgreSQL tests as well.
       - name: task test:postgres
         run: task test:postgres
+        env:
+          DATABASE_URL_PG: postgres://dashboard:dashboard@127.0.0.1:54329/dashboard
