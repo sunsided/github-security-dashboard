@@ -57,7 +57,11 @@ async fn serve(config: RealtimeConfig) -> (String, Arc<Hub>) {
         digest: None,
         realtime: Arc::clone(&hub),
     };
-    let app = server::app(state, AllowedHosts::new(&[]));
+    let app = server::app(
+        state,
+        AllowedHosts::new(&[]),
+        Arc::new(server::login::Login::none()),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -103,7 +107,7 @@ async fn connected_clients_receive_events() {
     let mut socket = open(&addr).await;
     send(
         &mut socket,
-        connect_message(&hub.issue_token(Utc::now()).token),
+        connect_message(&hub.issue_token(Utc::now(), "").token),
     )
     .await;
     let connected = next(&mut socket).await.unwrap();
@@ -135,7 +139,7 @@ async fn nothing_arrives_before_a_valid_token() {
 async fn expired_tokens_are_refused() {
     let (addr, hub) = serve(RealtimeConfig::default()).await;
     let mut socket = open(&addr).await;
-    let old = hub.issue_token(Utc::now() - chrono::Duration::hours(1));
+    let old = hub.issue_token(Utc::now() - chrono::Duration::hours(1), "");
     send(&mut socket, connect_message(&old.token)).await;
     check!(next(&mut socket).await == Err(Some(close::TOKEN_EXPIRED)));
 }
@@ -157,7 +161,7 @@ async fn anything_but_connect_first_is_a_protocol_error() {
     let mut socket = open(&addr).await;
     send(
         &mut socket,
-        serde_json::json!({ "refresh": { "token": hub.issue_token(Utc::now()).token } }),
+        serde_json::json!({ "refresh": { "token": hub.issue_token(Utc::now(), "").token } }),
     )
     .await;
     check!(next(&mut socket).await == Err(Some(close::PROTOCOL)));
@@ -174,20 +178,20 @@ async fn refreshing_keeps_the_connection_and_expiry_ends_it() {
     let mut refreshed = open(&addr).await;
     send(
         &mut refreshed,
-        connect_message(&hub.issue_token(Utc::now()).token),
+        connect_message(&hub.issue_token(Utc::now(), "").token),
     )
     .await;
     next(&mut refreshed).await.unwrap();
     let mut expiring = open(&addr).await;
     send(
         &mut expiring,
-        connect_message(&hub.issue_token(Utc::now()).token),
+        connect_message(&hub.issue_token(Utc::now(), "").token),
     )
     .await;
     next(&mut expiring).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    let fresh = hub.issue_token(Utc::now() + chrono::Duration::seconds(30));
+    let fresh = hub.issue_token(Utc::now() + chrono::Duration::seconds(30), "");
     send(
         &mut refreshed,
         serde_json::json!({ "refresh": { "token": fresh.token } }),

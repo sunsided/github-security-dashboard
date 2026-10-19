@@ -5,6 +5,7 @@ use daily_digest::{DigestService, Outcome};
 use gh::{ClientConfig, GitHub};
 use server::api::AppState;
 use server::config::Config;
+use server::login::{Login, Mode};
 use server::realtime::{Event, Hub};
 use server::scheduler::Scheduler;
 use std::path::PathBuf;
@@ -104,6 +105,12 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(Arc::clone(digest).run_forever());
     }
 
+    let login = Arc::new(
+        Login::from_config(&config.login, |name| std::env::var(name).ok())
+            .await
+            .context("setting up sign-in")?,
+    );
+    tracing::info!(mode = login.mode().as_str(), "sign-in");
     let app = server::app(
         AppState {
             store,
@@ -115,24 +122,29 @@ async fn main() -> anyhow::Result<()> {
             realtime: hub,
         },
         allowed_hosts,
+        Arc::clone(&login),
     );
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("binding {}", config.listen))?;
-    if !config.listen.ip().is_loopback() {
+    if !config.listen.ip().is_loopback() && login.mode() == Mode::None {
         tracing::warn!(
             listen = %config.listen,
-            "listening on a non-loopback address; the API has no authentication"
+            "listening on a non-loopback address without sign-in ([login] mode = \"none\")"
         );
     }
     tracing::info!("serving on http://{}", config.listen);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("shutting down");
-        })
-        .await?;
+    // Peer addresses for [login.proxy] trusted_proxies.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutting down");
+    })
+    .await?;
     Ok(())
 }
 

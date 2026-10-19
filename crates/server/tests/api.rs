@@ -113,10 +113,14 @@ async fn seeded_state() -> AppState {
 }
 
 async fn send(state: AppState, request: Request<Body>) -> (StatusCode, Value) {
-    let response = server::app(state, AllowedHosts::new(&[]))
-        .oneshot(request)
-        .await
-        .unwrap();
+    let response = server::app(
+        state,
+        AllowedHosts::new(&[]),
+        Arc::new(server::login::Login::none()),
+    )
+    .oneshot(request)
+    .await
+    .unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
