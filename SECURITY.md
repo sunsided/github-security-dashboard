@@ -22,6 +22,7 @@ Known and documented, so no report needed:
 
 - **No sign-in by default.** With `[login] mode = "none"`, anyone who can reach the API can read it. The server binds to `127.0.0.1` by default, and the README asks for sign-in anywhere else.
 - **`[login.proxy] trust = "headers"` believes whatever a trusted proxy address sends.** Keeping everything else from reaching the server is up to the deployment.
+- **`[login.proxy] trust = "istio"` doesn't check token signatures.** Istio does; a deployment without an `AuthorizationPolicy` that requires a valid token, or with a way around the mesh, accepts forged tokens.
 - **Signing out doesn't revoke a session.** Session cookies stay valid until they expire (`session_ttl`); signing out only removes the cookie from the browser.
 - **The key pair in `crates/gh/tests/fixtures/`** is a throwaway for tests and grants access to nothing.
 

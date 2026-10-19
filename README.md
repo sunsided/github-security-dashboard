@@ -87,6 +87,52 @@ sign_out_url = "/oauth2/sign_out"
 
 Not every proxy has a token worth verifying: oauth2-proxy with the GitHub provider forwards an opaque GitHub token. For those, `trust = "headers"` believes `X-Forwarded-User`, `X-Forwarded-Email` and `X-Forwarded-Groups` instead, but only from the addresses in `trusted_proxies`, and the server refuses to start without them. In a cluster that means the pod network of the proxy, plus a `NetworkPolicy` so nothing else can talk to the dashboard directly; anyone who can, can claim to be anyone.
 
+In an Istio mesh the sidecar (or waypoint) has usually checked the token already, through a `RequestAuthentication`, and checking the signature a second time only adds a dependency on the identity provider. `trust = "istio"` skips it: the server still insists on a well-formed, unexpired token, and on `issuer` and `audiences` if they are set (which I'd recommend, in case the mesh accepts tokens from more than one issuer), but believes the signature. Istio removes the token after checking it unless `forwardOriginalToken` is set; alternatively, point `payload_header` at the header `outputPayloadToHeader` fills, and the server reads the claims from there.
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: security-dashboard
+spec:
+  selector:
+    matchLabels:
+      app: security-dashboard
+  jwtRules:
+    - issuer: https://accounts.example.org
+      jwksUri: https://accounts.example.org/.well-known/jwks.json
+      audiences: [security-dashboard]
+      forwardOriginalToken: true
+---
+# RequestAuthentication only rejects invalid tokens; requests without one
+# pass. This makes a valid token mandatory, except for the probe endpoint.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: security-dashboard
+spec:
+  selector:
+    matchLabels:
+      app: security-dashboard
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            requestPrincipals: ["*"]
+    - to:
+        - operation:
+            paths: ["/healthz"]
+```
+
+```toml
+[login.proxy]
+trust = "istio"
+issuer = "https://accounts.example.org"
+audiences = ["security-dashboard"]
+```
+
+The `AuthorizationPolicy` is not optional here. Without it, a request without a token reaches the server untouched, and with `payload_header` that includes a payload header the client made up itself. The same goes for any path to the pod that doesn't pass through the mesh (an excluded port, `kubectl port-forward`): the server can't tell a forged token from a real one in this mode, and says so in its log at start-up.
+
 **`oidc`: the server signs users in itself.** For when there is no proxy, the server is an OpenID Connect client of its own. It uses the authorization code flow with PKCE (S256), state and nonce, which is what OAuth 2.1 leaves standing, verifies the ID token like above, and keeps the user in a signed, `HttpOnly`, `SameSite=Lax` session cookie (with the `__Host-` prefix and `Secure` on HTTPS). Register `https://<your host>/auth/callback` as the redirect URL with the provider; the client secret and the session key come from environment variables, like every other secret here:
 
 ```toml

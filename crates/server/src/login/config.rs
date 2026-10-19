@@ -61,6 +61,10 @@ pub enum ProxyTrust {
     /// Believe the identity headers, as long as they come from a trusted
     /// proxy address. For proxies that pass no verifiable token.
     Headers,
+    /// Read the token an Istio sidecar or waypoint has already verified
+    /// (`RequestAuthentication`), without checking its signature again:
+    /// only its form, expiry, and issuer and audience if configured.
+    Istio,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +73,9 @@ pub struct ProxyConfig {
     pub trust: ProxyTrust,
     /// Header carrying the token, with or without a `Bearer ` prefix.
     pub token_header: String,
+    /// With `istio`: header carrying only the token's payload, as Istio's
+    /// `outputPayloadToHeader` sets it. Read instead of `token_header`.
+    pub payload_header: Option<String>,
     /// Expected `iss`; its discovery document names the signing keys.
     pub issuer: Option<String>,
     /// Accepted `aud` values; the proxy's client ID for ID tokens.
@@ -90,6 +97,7 @@ impl Default for ProxyConfig {
         Self {
             trust: ProxyTrust::Token,
             token_header: "authorization".into(),
+            payload_header: None,
             issuer: None,
             audiences: Vec::new(),
             jwks_url: None,
@@ -142,6 +150,9 @@ impl LoginConfig {
                 let Some(proxy) = &self.proxy else {
                     bail!("[login] mode = \"proxy\" needs a [login.proxy] section");
                 };
+                if proxy.payload_header.is_some() && proxy.trust != ProxyTrust::Istio {
+                    bail!("[login.proxy] payload_header only applies to trust = \"istio\"");
+                }
                 match proxy.trust {
                     ProxyTrust::Token => {
                         if proxy.issuer.is_none() {
@@ -153,6 +164,7 @@ impl LoginConfig {
                             bail!("[login.proxy] needs the audiences tokens must be issued for");
                         }
                     }
+                    ProxyTrust::Istio => {}
                     ProxyTrust::Headers => {
                         if proxy.trusted_proxies.is_empty() {
                             bail!(
@@ -224,6 +236,22 @@ mod tests {
         check!(ok.proxy.unwrap().trusted_proxies.len() == 2);
         check!(
             parse("mode = \"proxy\"\n[proxy]\ntrust = \"headers\"\ntrusted_proxies = [\"10.0.0.300/8\"]")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn istio_needs_nothing_but_takes_payload_headers() {
+        let ok = parse("mode = \"proxy\"\n[proxy]\ntrust = \"istio\"").unwrap();
+        check!(ok.proxy.unwrap().trust == ProxyTrust::Istio);
+        check!(
+            parse(
+                "mode = \"proxy\"\n[proxy]\ntrust = \"istio\"\npayload_header = \"x-jwt-payload\""
+            )
+            .is_ok()
+        );
+        check!(
+            parse("mode = \"proxy\"\n[proxy]\ntrust = \"headers\"\ntrusted_proxies = [\"10.0.0.0/8\"]\npayload_header = \"x\"")
                 .is_err()
         );
     }

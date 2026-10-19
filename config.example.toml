@@ -149,6 +149,13 @@ groups = []
 # email_header = "x-forwarded-email"
 # groups_header = "x-forwarded-groups"   # comma-separated
 #
+# "istio": the mesh verified the token already (RequestAuthentication); only
+# form and expiry are checked here, plus issuer and audiences if set. Needs an
+# AuthorizationPolicy that requires a valid token (see README).
+# trust = "istio"
+# payload_header = "x-jwt-payload"   # Istio's outputPayloadToHeader, instead
+#                                    # of forwardOriginalToken
+#
 # Peer addresses requests must come from; required for "headers".
 # trusted_proxies = ["10.0.0.0/8"]
 # Linked as "Sign out" in the UI.
