@@ -2,6 +2,7 @@
 // short-lived token, open the WebSocket, send the token first. Events are
 // hints to reload data from the REST API.
 
+import { signInIfNeeded } from './api';
 import { reconnectDelay, refreshDelay } from './backoff';
 
 export type LiveStatus = 'connecting' | 'live' | 'offline';
@@ -23,6 +24,7 @@ async function fetchToken(): Promise<string> {
 		// Required by the server's CSRF guard (see crates/server/src/guard.rs).
 		headers: { 'x-dashboard-request': '1' }
 	});
+	await signInIfNeeded(response);
 	if (!response.ok) throw new Error(`token: ${response.status}`);
 	const body = (await response.json()) as { token: string };
 	return body.token;

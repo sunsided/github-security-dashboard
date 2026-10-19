@@ -5,9 +5,13 @@
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { live } from '#lib/realtime.svelte.js';
+	import { canSignOut, signOut } from '#lib/api.js';
 	import type { LayoutProps } from './$types';
 
-	let { children }: LayoutProps = $props();
+	let { children, data }: LayoutProps = $props();
+
+	const user = $derived(data.me.user);
+	const userLabel = $derived(user ? (user.name ?? user.email ?? user.subject) : null);
 
 	// Events say "something changed"; bursts (a run touching many
 	// repositories) collapse into one reload. One connection for the app's
@@ -56,6 +60,14 @@
 		<span aria-hidden="true">{live.status === 'live' ? '●' : '○'}</span>
 		{statusText[live.status]}
 	</span>
+	{#if userLabel}
+		<span class="user">
+			<span title={user?.email ?? undefined}>{userLabel}</span>
+			{#if canSignOut(data.me)}
+				<button type="button" onclick={() => void signOut(data.me)}>Sign out</button>
+			{/if}
+		</span>
+	{/if}
 </header>
 
 <main>
@@ -139,6 +151,23 @@
 
 	.live.live span {
 		color: var(--good);
+	}
+
+	.user {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		font-size: 0.85rem;
+		color: var(--ink-secondary);
+		white-space: nowrap;
+	}
+
+	.user button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--accent);
+		cursor: pointer;
 	}
 
 	.brand {

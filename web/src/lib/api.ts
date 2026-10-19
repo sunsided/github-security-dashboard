@@ -143,8 +143,30 @@ export interface Summary {
 
 type Fetch = typeof fetch;
 
-async function getJson<T>(fetch: Fetch, path: string): Promise<T> {
+/**
+ * Sends the browser to sign in when the server says nobody is (any more).
+ * Only with `[login] mode = "oidc"`; behind a proxy, the proxy does that.
+ */
+export async function signInIfNeeded(response: Response): Promise<void> {
+	if (response.status !== 401) return;
+	const body = (await response
+		.clone()
+		.json()
+		.catch(() => null)) as { login?: string | null } | null;
+	if (body?.login) {
+		const target = location.pathname + location.search;
+		location.assign(`${body.login}?return_to=${encodeURIComponent(target)}`);
+	}
+}
+
+async function get(fetch: Fetch, path: string): Promise<Response> {
 	const response = await fetch(path, { headers: { accept: 'application/json' } });
+	await signInIfNeeded(response);
+	return response;
+}
+
+async function getJson<T>(fetch: Fetch, path: string): Promise<T> {
+	const response = await get(fetch, path);
 	if (!response.ok) {
 		throw new Error(`${path}: ${response.status} ${response.statusText}`);
 	}
@@ -163,7 +185,7 @@ export async function getRepo(
 	name: string
 ): Promise<RepoDetail | null> {
 	const path = `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
-	const response = await fetch(path, { headers: { accept: 'application/json' } });
+	const response = await get(fetch, path);
 	if (response.status === 404) return null;
 	if (!response.ok) {
 		throw new Error(`${path}: ${response.status} ${response.statusText}`);
@@ -194,9 +216,7 @@ export interface Delivery {
 
 /** Recent digest deliveries; `null` while the digest is disabled. */
 export async function getDeliveries(fetch: Fetch): Promise<Delivery[] | null> {
-	const response = await fetch('/api/digest/deliveries', {
-		headers: { accept: 'application/json' }
-	});
+	const response = await get(fetch, '/api/digest/deliveries');
 	if (response.status === 404) return null;
 	if (!response.ok) {
 		throw new Error(`/api/digest/deliveries: ${response.status} ${response.statusText}`);
@@ -244,7 +264,48 @@ export async function requestRefresh(): Promise<void> {
 		// Required by the server's CSRF guard (see crates/server/src/guard.rs).
 		headers: { 'x-dashboard-request': '1' }
 	});
+	await signInIfNeeded(response);
 	if (!response.ok) {
 		throw new Error(`refresh: ${response.status} ${response.statusText}`);
 	}
+}
+
+// Mirrors crates/server/src/login/mod.rs.
+
+export type LoginMode = 'none' | 'proxy' | 'oidc';
+
+export interface User {
+	subject: string;
+	email: string | null;
+	name: string | null;
+	groups?: string[];
+}
+
+export interface Me {
+	mode: LoginMode;
+	/** `null` without sign-in. */
+	user: User | null;
+	/** The proxy's sign-out endpoint, if configured. */
+	sign_out_url: string | null;
+}
+
+export const getMe = (fetch: Fetch) => getJson<Me>(fetch, '/api/me');
+
+/** Whether `signOut` can do anything for this kind of sign-in. */
+export const canSignOut = (me: Me) => me.mode === 'oidc' || me.sign_out_url !== null;
+
+export async function signOut(me: Me): Promise<void> {
+	if (me.mode !== 'oidc') {
+		if (me.sign_out_url) location.assign(me.sign_out_url);
+		return;
+	}
+	const response = await fetch('/auth/logout', {
+		method: 'POST',
+		headers: { 'x-dashboard-request': '1' }
+	});
+	if (!response.ok) {
+		throw new Error(`sign out: ${response.status} ${response.statusText}`);
+	}
+	const body = (await response.json()) as { redirect: string };
+	location.assign(body.redirect);
 }
