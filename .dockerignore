@@ -12,3 +12,4 @@
 /web/.yarn/install-state.gz
 /web/.task/
 /web/.vscode/
+/web/.yarn/cache/
