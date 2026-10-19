@@ -43,12 +43,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
-        # Pinned to a commit, the action no longer picks the toolchain from
-        # its branch name.
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
+      # rustup comes with the runner; no action to pin and keep current.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
@@ -77,3 +76,4 @@ jobs:
         run: task test:postgres
         env:
           DATABASE_URL_PG: postgres://dashboard:dashboard@127.0.0.1:54329/dashboard
+
