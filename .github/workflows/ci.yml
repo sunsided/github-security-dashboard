@@ -77,3 +77,24 @@ jobs:
         env:
           DATABASE_URL_PG: postgres://dashboard:dashboard@127.0.0.1:54329/dashboard
 
+  # Builds the release image without pushing it, so a change that breaks the
+  # Dockerfile fails here rather than at the next tag. Its cache has a scope
+  # of its own: the release workflow never builds from layers a CI run wrote.
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=ci-image
+          cache-to: type=gha,scope=ci-image,mode=max
