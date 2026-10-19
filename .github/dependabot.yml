@@ -5,6 +5,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A week for a compromised release to be noticed and pulled first.
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -14,3 +17,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A week for a compromised release to be noticed and pulled first.
+    cooldown:
+      default-days: 7

@@ -25,13 +25,17 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      # Pushing the image to ghcr.io.
       packages: write
       # Signing attestations with the workflow's OIDC identity (Sigstore).
       id-token: write
+      # Storing them with the repository's attestations.
       attestations: write
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
