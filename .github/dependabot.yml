@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Actions are pinned to commit SHAs; this moves the pins along with releases.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A week for a compromised release to be noticed and pulled first.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images are pinned by digest in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    # A week for a compromised release to be noticed and pulled first.
+    cooldown:
+      default-days: 7

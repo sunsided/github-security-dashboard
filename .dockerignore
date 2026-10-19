@@ -1,0 +1,15 @@
+# Allowlist: the build context holds only what the image is built from, so
+# local secrets (.env, *.pem, config.toml) and databases never reach it.
+*
+!/Cargo.toml
+!/Cargo.lock
+!/crates/
+!/web/
+
+/web/node_modules/
+/web/build/
+/web/.svelte-kit/
+/web/.yarn/install-state.gz
+/web/.task/
+/web/.vscode/
+/web/.yarn/cache/

@@ -37,15 +37,37 @@ Other tasks worth knowing (`task` alone lists all of them):
 | `task build:release` | Builds the UI and a single `target/release/server` binary with the UI embedded |
 | `task test` | Rust and UI tests |
 | `task check` | Formatting, clippy, ESLint, svelte-check |
+| `task lint:actions` | actionlint and zizmor over the GitHub workflows (Docker) |
 | `task ci` | `check`, `test` and the UI build, as CI would run them |
 | `task db:up` | A development PostgreSQL on `127.0.0.1:54329` (Docker Compose) |
 | `task test:postgres` | The storage contract tests against that PostgreSQL |
+| `task docker:build` | The container image, see [Running in a container](#running-in-a-container) |
 
 For a sense of scale: the first run against my own account (718 repositories, plus two external ones) takes about three minutes and some 700 requests, most of them contributor counts. Later runs reuse ETags where GitHub supports them, and those don't count against the quota.
 
 Alerts are cheap for organizations (one request per source covers every repository, provided the token belongs to an owner or security manager) and comparatively expensive for user accounts, where every repository needs three requests of its own. That is why archived repositories and forks are skipped by default (`collector.alerts.skip_archived`, `skip_forks`). With those defaults, a full run over my account, alerts included, takes a little under four minutes. The resulting numbers match what GitHub's Security tab shows, down to repositories with a couple of hundred open Dependabot alerts.
 
 Every alert state change is written to an append-only log, which the Activity page shows. "Fixed" and "dismissed" are told apart by looking up alerts individually once they drop out of the open list; a source that couldn't be read in a run never closes anything, so a flaky 503 doesn't rewrite history.
+
+## Running in a container
+
+Version tags (and manual runs of the Release workflow) publish an image to `ghcr.io/sunsided/github-security-dashboard`. It is built `FROM scratch`: a statically linked (musl) server with the UI embedded, the CA certificates it needs to reach GitHub, and its CycloneDX SBOM at `/server.cdx.json`. There is no shell, package manager or libc in it, and it runs as user `65532`.
+
+Every published image comes with a build provenance attestation and an SBOM attestation, both signed with the workflow's identity. To check an image before running it:
+
+```sh
+gh attestation verify oci://ghcr.io/sunsided/github-security-dashboard:1.2.3 --owner sunsided
+```
+
+The server reads its configuration from `/config/config.toml` (`DASHBOARD_CONFIG`) and works in `/data`, where the default SQLite database ends up; mount a volume there, or point `storage.url` at PostgreSQL. Inside a container the loopback default for `listen` is unreachable from outside, so the mounted config needs `listen = "0.0.0.0:8080"`, the hostname under `allowed_hosts`, and, per [Before you run it](#before-you-run-it), sign-in. Secrets come in as environment variables, as everywhere else:
+
+```sh
+docker run -p 8080:8080 --env-file .env \
+  -v ./config.toml:/config/config.toml:ro -v dashboard-data:/data \
+  ghcr.io/sunsided/github-security-dashboard:1.2.3
+```
+
+Kubernetes probes can use `GET /healthz`, which answers regardless of `Host`. `task docker:build` builds the image locally, `task docker:sbom` writes just the SBOM to `sbom/`.
 
 ## Authentication
 

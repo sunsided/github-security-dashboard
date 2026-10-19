@@ -22,7 +22,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17.6
+        image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
         env:
           POSTGRES_USER: dashboard
           POSTGRES_PASSWORD: dashboard
@@ -39,15 +39,19 @@ jobs:
       CARGO_TERM_COLOR: always
 
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          components: rustfmt, clippy
+          persist-credentials: false
 
-      - uses: Swatinem/rust-cache@v2
+      # rustup comes with the runner; no action to pin and keep current.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
 
-      - uses: actions/setup-node@v5
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
 
@@ -56,7 +60,7 @@ jobs:
       - name: Enable corepack
         run: corepack enable
 
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -72,3 +76,27 @@ jobs:
         run: task test:postgres
         env:
           DATABASE_URL_PG: postgres://dashboard:dashboard@127.0.0.1:54329/dashboard
+
+  # Builds the release image without pushing it, so a change that breaks the
+  # Dockerfile fails here rather than at the next tag. Its cache has a scope
+  # of its own: the release workflow never builds from layers a CI run wrote.
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build image (not pushed)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=ci-image
+          cache-to: type=gha,scope=ci-image,mode=max
