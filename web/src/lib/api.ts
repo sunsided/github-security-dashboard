@@ -277,6 +277,8 @@ export type LoginMode = 'none' | 'proxy' | 'oidc';
 export interface User {
 	subject: string;
 	email: string | null;
+	/** Only verified addresses count for the server's allow-list. */
+	email_verified: boolean;
 	name: string | null;
 	groups?: string[];
 }

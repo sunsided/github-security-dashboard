@@ -41,6 +41,11 @@ pub struct User {
     /// header.
     pub subject: String,
     pub email: Option<String>,
+    /// Whether the provider vouches for `email`. Only verified addresses
+    /// count for `[login.allow]`: some providers let users put any address
+    /// into their profile.
+    #[serde(default)]
+    pub email_verified: bool,
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<String>,
@@ -55,7 +60,11 @@ impl Allow {
         if self.is_open() {
             return true;
         }
-        let email = user.email.as_deref().map(str::to_ascii_lowercase);
+        let email = user
+            .email
+            .as_deref()
+            .filter(|_| user.email_verified)
+            .map(str::to_ascii_lowercase);
         let by_email = email.as_deref().is_some_and(|email| {
             self.emails.iter().any(|e| e.eq_ignore_ascii_case(email))
                 || email.rsplit_once('@').is_some_and(|(_, domain)| {
@@ -71,7 +80,8 @@ impl Allow {
 struct IdentityClaims {
     sub: String,
     email: Option<String>,
-    email_verified: Option<bool>,
+    /// A boolean, or `"true"` with some providers.
+    email_verified: Option<serde_json::Value>,
     name: Option<String>,
     preferred_username: Option<String>,
     #[serde(flatten)]
@@ -91,8 +101,13 @@ impl IdentityClaims {
         };
         User {
             subject: self.sub,
-            // An address the provider hasn't verified proves nothing.
-            email: self.email.filter(|_| self.email_verified != Some(false)),
+            email_verified: self.email.is_some()
+                && match &self.email_verified {
+                    Some(serde_json::Value::Bool(verified)) => *verified,
+                    Some(serde_json::Value::String(verified)) => verified == "true",
+                    _ => false,
+                },
+            email: self.email,
             name: self.name.or(self.preferred_username),
             groups,
         }
@@ -275,6 +290,7 @@ mod tests {
         User {
             subject: "u".into(),
             email: email.map(str::to_owned),
+            email_verified: true,
             name: None,
             groups: groups.iter().map(|g| g.to_string()).collect(),
         }
@@ -298,6 +314,13 @@ mod tests {
         check!(!allow.permits(&user(Some("bob@example.org"), &["devs"])));
         check!(!allow.permits(&user(Some("bob@evil.corp.example.net"), &[])));
         check!(!allow.permits(&user(None, &[])));
+
+        let mut unverified = user(Some("alice@example.org"), &[]);
+        unverified.email_verified = false;
+        check!(
+            !allow.permits(&unverified),
+            "unverified addresses prove nothing"
+        );
     }
 
     #[test]
@@ -310,6 +333,7 @@ mod tests {
         let user = claims.into_user("roles");
         check!(user.subject == "123");
         check!(user.email.as_deref() == Some("a@b.c"));
+        check!(user.email_verified);
         check!(user.name.as_deref() == Some("alice"));
         check!(user.groups == ["admin", "dev"]);
 
@@ -318,8 +342,25 @@ mod tests {
         }))
         .unwrap();
         let user = unverified.into_user("groups");
-        check!(user.email == None, "unverified addresses are dropped");
+        check!(!user.email_verified);
         check!(user.groups == ["one"]);
+
+        for (claim, verified) in [
+            (serde_json::json!("true"), true),
+            (serde_json::Value::Null, false),
+        ] {
+            let claims: IdentityClaims = serde_json::from_value(serde_json::json!({
+                "sub": "1", "email": "a@b.c", "email_verified": claim
+            }))
+            .unwrap();
+            check!(claims.into_user("groups").email_verified == verified);
+        }
+        let silent: IdentityClaims =
+            serde_json::from_value(serde_json::json!({ "sub": "1", "email": "a@b.c" })).unwrap();
+        check!(
+            !silent.into_user("groups").email_verified,
+            "no claim, no verification"
+        );
     }
 
     #[test]

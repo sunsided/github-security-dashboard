@@ -126,6 +126,8 @@ impl Proxy {
                 let email = value(email).map(str::to_owned);
                 Some(User {
                     subject: value(user).map(str::to_owned).or_else(|| email.clone())?,
+                    // The proxy vouches for it, as for the rest.
+                    email_verified: email.is_some(),
                     email,
                     name: None,
                     groups: value(groups)
