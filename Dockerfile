@@ -7,10 +7,7 @@
 #   docker build -t github-security-dashboard .
 #   docker build --target sbom --output sbom .   # just the SBOM, into ./sbom
 
-ARG RUST_IMAGE=rust:1.98.1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f
-ARG NODE_IMAGE=node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
-
-FROM ${NODE_IMAGE} AS web
+FROM node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS web
 WORKDIR /src/web
 RUN corepack enable
 COPY web/package.json web/yarn.lock web/.yarnrc.yml ./
@@ -19,7 +16,7 @@ RUN --mount=type=cache,target=/root/.yarn/berry/cache \
 COPY web/ ./
 RUN yarn build
 
-FROM ${RUST_IMAGE} AS server
+FROM rust:1.98.1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS server
 # C compilers for the bundled SQLite and aws-lc; certificates for the image.
 RUN apk add --no-cache ca-certificates gcc make musl-dev
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
