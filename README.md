@@ -37,6 +37,7 @@ Other tasks worth knowing (`task` alone lists all of them):
 | `task build:release` | Builds the UI and a single `target/release/server` binary with the UI embedded |
 | `task test` | Rust and UI tests |
 | `task check` | Formatting, clippy, ESLint, svelte-check |
+| `task lint:actions` | actionlint and zizmor over the GitHub workflows (Docker) |
 | `task ci` | `check`, `test` and the UI build, as CI would run them |
 | `task db:up` | A development PostgreSQL on `127.0.0.1:54329` (Docker Compose) |
 | `task test:postgres` | The storage contract tests against that PostgreSQL |

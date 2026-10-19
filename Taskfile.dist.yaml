@@ -171,6 +171,29 @@ tasks:
       - cargo clippy --workspace --all-targets -- -D warnings
       - task: web:lint
 
+  lint:actions:
+    desc: Lint the GitHub workflows with actionlint and zizmor (pinned images, via docker)
+    # Same gates as the Workflow lint workflow: any actionlint error, and
+    # zizmor findings of medium severity or above, fail. Keep the images in
+    # step with .github/workflows/workflow-lint.yml. zizmor's online audits
+    # need a token: `GH_TOKEN=$(gh auth token) task lint:actions`; without
+    # one it audits offline.
+    preconditions:
+      - sh: command -v docker
+        msg: "docker not found — install from https://docker.com"
+    vars:
+      ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+      ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
+    cmds:
+      - |
+        online="--offline"; token=""
+        if [ -n "${GH_TOKEN:-}" ]; then online=""; token="-e GH_TOKEN"; fi
+        status=0
+        docker run --rm -v "$PWD:/repo:ro" -w /repo {{.ACTIONLINT_IMAGE}} || status=1
+        docker run --rm $token -v "$PWD:/repo:ro" -w /repo {{.ZIZMOR_IMAGE}} \
+          --no-progress --min-severity medium $online . || status=1
+        exit $status
+
   lint:fix:
     desc: Apply lint fixes and reformat
     aliases: [fix]
