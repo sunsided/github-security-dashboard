@@ -106,7 +106,9 @@ impl IdentityClaims {
             email_verified: self.email.is_some()
                 && match &self.email_verified {
                     Some(serde_json::Value::Bool(verified)) => *verified,
-                    Some(serde_json::Value::String(verified)) => verified == "true",
+                    Some(serde_json::Value::String(verified)) => {
+                        verified.eq_ignore_ascii_case("true")
+                    }
                     _ => false,
                 },
             email: self.email,
@@ -358,6 +360,8 @@ mod tests {
 
         for (claim, verified) in [
             (serde_json::json!("true"), true),
+            (serde_json::json!("True"), true),
+            (serde_json::json!("yes"), false),
             (serde_json::Value::Null, false),
         ] {
             let claims: IdentityClaims = serde_json::from_value(serde_json::json!({
