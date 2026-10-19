@@ -233,6 +233,12 @@ async fn proxy_tokens_are_verified() {
 
     let (response, _) = send(&app, request("GET", "/healthz", &[])).await;
     check!(response.status() == StatusCode::OK, "probes need no token");
+    let mut probe = request("GET", "/healthz", &[]);
+    probe
+        .headers_mut()
+        .insert("host", "10.1.2.3:8080".parse().unwrap());
+    let (response, _) = send(&app, probe).await;
+    check!(response.status() == StatusCode::OK, "probes come by pod IP");
 }
 
 #[tokio::test]

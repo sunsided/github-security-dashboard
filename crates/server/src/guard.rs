@@ -51,7 +51,14 @@ fn strip_port(host: &str) -> &str {
     host.rsplit_once(':').map_or(host, |(name, _)| name)
 }
 
+/// Answers to probes regardless of `Host`: Kubernetes sends the pod's IP,
+/// and the reply carries nothing a rebinding page could use.
+pub const HEALTH_PATH: &str = "/healthz";
+
 pub async fn check(State(allowed): State<AllowedHosts>, request: Request, next: Next) -> Response {
+    if request.uri().path() == HEALTH_PATH && *request.method() == Method::GET {
+        return next.run(request).await;
+    }
     if !allowed.allows(request.headers()) {
         tracing::warn!(host = ?request.headers().get(header::HOST), "rejected request for unknown host");
         return (StatusCode::MISDIRECTED_REQUEST, "unknown host").into_response();

@@ -22,7 +22,7 @@ pub fn app(
 ) -> Router {
     api::router(state)
         .merge(login.router())
-        .route("/healthz", get(|| async { "ok" }))
+        .route(guard::HEALTH_PATH, get(|| async { "ok" }))
         .fallback(ui::serve)
         .layer(from_fn_with_state(login, login::require))
         .layer(from_fn_with_state(allowed_hosts, guard::check))
