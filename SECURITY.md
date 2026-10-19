@@ -14,13 +14,15 @@ There are no releases yet. Fixes go to `main`; please test against it.
 
 In scope:
 
-- the server: REST API, live-update WebSocket and its tokens, collector, digest delivery
+- the server: REST API, sign-in (proxy and OpenID Connect), live-update WebSocket and its tokens, collector, digest delivery
 - the web UI
 - the defaults in `config.example.toml`
 
 Known and documented, so no report needed:
 
-- **No login.** Anyone who can reach the API can read it. The server binds to `127.0.0.1` by default, and the README asks for an authenticating proxy anywhere else.
+- **No sign-in by default.** With `[login] mode = "none"`, anyone who can reach the API can read it. The server binds to `127.0.0.1` by default, and the README asks for sign-in anywhere else.
+- **`[login.proxy] trust = "headers"` believes whatever a trusted proxy address sends.** Keeping everything else from reaching the server is up to the deployment.
+- **Signing out doesn't revoke a session.** Session cookies stay valid until they expire (`session_ttl`); signing out only removes the cookie from the browser.
 - **The key pair in `crates/gh/tests/fixtures/`** is a throwaway for tests and grants access to nothing.
 
 Out of scope:
@@ -32,7 +34,8 @@ Out of scope:
 
 For orientation when assessing an issue:
 
-- GitHub tokens, App private keys and webhook URLs come from environment variables or files, never from `config.toml`, and stay out of logs and error messages.
+- GitHub tokens, App private keys, webhook URLs, the OpenID Connect client secret and the session key come from environment variables or files, never from `config.toml`, and stay out of logs and error messages.
+- With sign-in, every request except the sign-in flow and `/healthz` needs a signed-in user. Tokens from the identity provider are verified against its published keys, with the configured issuer and audience, asymmetric algorithms only; the server's own sign-in uses PKCE, state and nonce, and keeps the session in a signed `HttpOnly` cookie. Email addresses count for the allow-list only when the provider marks them verified.
 - Requests are only answered for `localhost`, `127.0.0.1`, `[::1]` and hostnames listed in `allowed_hosts` (DNS rebinding).
 - Requests that change anything require a custom header that browsers only send after a CORS preflight, which the server never grants (CSRF).
 - The live-update socket refuses foreign origins before upgrading, and delivers nothing until it receives a valid, unexpired token signed by the server.

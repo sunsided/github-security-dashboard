@@ -1,7 +1,7 @@
 # Copy to config.toml (gitignored), or run: task setup
 
-# The API is unauthenticated; keep it on loopback unless something in front
-# of it handles authentication.
+# Without [login], anyone who can reach the server can use it; keep it on
+# loopback unless a proxy in front handles sign-in, or configure [login].
 listen = "127.0.0.1:8080"
 
 # Requests are only answered for localhost, 127.0.0.1 and [::1] (protects
@@ -115,3 +115,52 @@ connect_timeout = "10s"
 # Environment variable with the signing key (32+ bytes), e.g. to share it with
 # Centrifugo's token_hmac_secret_key. Without it, a random key per process.
 # signing_key_env = "REALTIME_SIGNING_KEY"
+
+[login]
+# Who may use the dashboard:
+#   "none"   anyone who can reach it (fine on loopback)
+#   "proxy"  an authenticating proxy in front vouches for the user, see [login.proxy]
+#   "oidc"   the server signs users in itself with OpenID Connect, see [login.oidc]
+mode = "none"
+# Claim with the user's groups in ID and access tokens.
+# groups_claim = "groups"
+
+# Signed-in users who get in. With all lists empty, anyone the identity
+# provider or proxy lets through.
+[login.allow]
+emails = []
+domains = []          # e.g. ["example.org"]
+groups = []
+
+# [login.proxy]
+# "token" (default): verify the JWT the proxy passes along, e.g. the ID token
+# from oauth2-proxy --pass-authorization-header.
+# trust = "token"
+# token_header = "authorization"     # "Bearer " prefix optional
+# issuer = "https://accounts.example.org"
+# audiences = ["oauth2-proxy"]       # the proxy's client ID, for ID tokens
+# jwks_url = "https://..."           # only if the issuer has no discovery document
+#
+# "headers": believe X-Forwarded-User/-Email/-Groups, for proxies without a
+# verifiable token (e.g. oauth2-proxy with the GitHub provider). Only from
+# trusted_proxies, and make sure nothing else can reach the server.
+# trust = "headers"
+# user_header = "x-forwarded-user"
+# email_header = "x-forwarded-email"
+# groups_header = "x-forwarded-groups"   # comma-separated
+#
+# Peer addresses requests must come from; required for "headers".
+# trusted_proxies = ["10.0.0.0/8"]
+# Linked as "Sign out" in the UI.
+# sign_out_url = "/oauth2/sign_out"
+
+# [login.oidc]
+# issuer = "https://accounts.example.org"
+# client_id = "security-dashboard"
+# client_secret_env = "OIDC_CLIENT_SECRET"   # omit for a public client (PKCE only)
+# redirect_url = "https://security.example.org/auth/callback"
+# scopes = ["openid", "email", "profile"]
+# session_ttl = "8h"
+# Session signing key (32+ bytes). Without it, a random key per process:
+# everyone signs in again after a restart, and replicas don't share sessions.
+# session_key_env = "SESSION_KEY"
