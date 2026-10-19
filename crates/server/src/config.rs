@@ -33,6 +33,9 @@ pub struct Config {
     pub digest: daily_digest::DigestConfig,
     #[serde(default)]
     pub realtime: crate::realtime::RealtimeConfig,
+    /// Signing in to the dashboard; [`AuthConfig`] is about GitHub.
+    #[serde(default)]
+    pub login: crate::login::LoginConfig,
 }
 
 /// Weights of open alerts per severity in a repository's risk score.
@@ -210,6 +213,7 @@ impl Config {
             bail!("poll_interval must be at least one minute");
         }
         config.digest.validate().map_err(|e| anyhow!(e))?;
+        config.login.validate()?;
         Ok(config)
     }
 }
@@ -235,6 +239,7 @@ mod tests {
         check!(config.auth.token_env == "GITHUB_TOKEN");
         check!(config.collector.page_size == 25);
         check!(config.scoring == Scoring::default());
+        check!(config.login.mode == crate::login::Mode::None);
     }
 
     #[test]
@@ -275,6 +280,7 @@ mod tests {
         check!(Config::parse("[collector]\nexternal_repos = [\"nope\"]").is_err());
         check!(Config::parse("typo = 1\n[collector]\nowners = [\"a\"]").is_err());
         check!(Config::parse("poll_interval = \"5s\"\n[collector]\nowners = [\"a\"]").is_err());
+        check!(Config::parse("[login]\nmode = \"oidc\"\n[collector]\nowners = [\"a\"]").is_err());
     }
 
     const TEST_KEY: &str = include_str!("../../gh/tests/fixtures/test-app-key.pem");

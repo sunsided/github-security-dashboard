@@ -19,7 +19,8 @@ export default defineConfig({
 	],
 	server: {
 		// ws: the live-update socket at /api/realtime goes through the proxy too.
-		proxy: { '/api': { target: API, ws: true } }
+		// /auth: sign-in with [login] mode = "oidc".
+		proxy: { '/api': { target: API, ws: true }, '/auth': { target: API } }
 	},
 	test: {
 		expect: { requireAssertions: true },

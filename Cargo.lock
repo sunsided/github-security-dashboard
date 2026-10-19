@@ -1441,6 +1441,9 @@ name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -2531,6 +2534,7 @@ dependencies = [
  "anyhow",
  "assert2",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "clap",
@@ -2540,11 +2544,14 @@ dependencies = [
  "getrandom 0.4.3",
  "gh",
  "humantime-serde",
+ "ipnet",
  "jsonwebtoken",
  "mime_guess",
+ "reqwest",
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "store",
  "tokio",
  "tokio-tungstenite",
@@ -2553,6 +2560,8 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -3400,6 +3409,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

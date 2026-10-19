@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "test-idp",
+      "n": "wZe_lYJl2lXRsFZ0Vg-qf2mNudunJM0J0cjlZK_2P9xCoecn5dJN2TYX6fYHQPWQ_44AmfudAIRvkd0N_EeY1R52KTS8FqUpriUq25wUTOChL1FLJ_73wGXAR59ZCnmu5pd6STzZZQ5y2SS3PeqdJfL7LTEq-bYkkJqnr5k5sdAMyl11AdDKk6yUMbgT9oV0rkufc-C5IPWi3o4jW5uWI0oAN-gdEhktiXrRBnk0W2uYzb47OVoP02Z8G7dz47MgvHaQlAdA170qJNCXK3yoag_WMkx1UPAits7EBoOPwrNSl6ifTR4HrAoyvsKFqalKZjPLKmKtVsvDsmC2gcoLNw",
+      "e": "AQAB"
+    }
+  ]
+}

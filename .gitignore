@@ -14,6 +14,8 @@
 *.pem
 # Throwaway key pair for the GitHub App auth tests; grants access to nothing.
 !/crates/gh/tests/fixtures/*.pem
+# Throwaway signing key of the fake identity provider in the login tests.
+!/crates/server/tests/fixtures/*.pem
 *.db
 *.db-shm
 *.db-wal

@@ -4,8 +4,8 @@
 //! `POST /api/realtime/token` (an HS256 JWT in Centrifugo's connection-token
 //! format), opens `GET /api/realtime`, and sends the token as its first
 //! message. Browsers can't set headers on WebSocket connections, so the
-//! token travels in the protocol instead; authentication added in front of
-//! the token endpoint later therefore covers the live connection as well.
+//! token travels in the protocol instead; the sign-in that guards the token
+//! endpoint (see [`crate::login`]) thereby covers the live connection too.
 //!
 //! Protocol (JSON text frames):
 //! - client: `{"connect":{"token":…}}` first, `{"refresh":{"token":…}}` before
@@ -101,8 +101,8 @@ pub enum Event {
     },
 }
 
-/// Centrifugo connection-token claims. An empty `sub` is an anonymous user;
-/// once authentication exists it carries the user ID.
+/// Centrifugo connection-token claims. `sub` is the signed-in user's ID, or
+/// empty without sign-in.
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     sub: String,
@@ -154,12 +154,13 @@ impl Hub {
         let _ = self.events.send(event);
     }
 
-    pub fn issue_token(&self, now: DateTime<Utc>) -> IssuedToken {
+    /// `subject`: the user ID, empty for anonymous users.
+    pub fn issue_token(&self, now: DateTime<Utc>, subject: &str) -> IssuedToken {
         let expires_at = now
             + chrono::Duration::from_std(self.config.token_ttl)
                 .unwrap_or(chrono::Duration::minutes(5));
         let claims = Claims {
-            sub: String::new(),
+            sub: subject.to_owned(),
             iat: now.timestamp(),
             exp: expires_at.timestamp(),
         };
@@ -208,8 +209,12 @@ impl Hub {
     }
 }
 
-pub async fn token(State(hub): State<Arc<Hub>>) -> impl IntoResponse {
-    axum::Json(hub.issue_token(Utc::now()))
+pub async fn token(
+    State(hub): State<Arc<Hub>>,
+    user: Option<axum::Extension<crate::login::User>>,
+) -> impl IntoResponse {
+    let subject = user.as_ref().map_or("", |u| u.subject.as_str());
+    axum::Json(hub.issue_token(Utc::now(), subject))
 }
 
 pub async fn connect(
@@ -369,11 +374,11 @@ mod tests {
     fn issued_tokens_verify_until_they_expire() {
         let hub = hub(Duration::from_secs(300));
         let now = Utc::now();
-        let issued = hub.issue_token(now);
+        let issued = hub.issue_token(now, "");
         check!(hub.verify(&issued.token) == Ok(issued.expires_at));
         check!((issued.expires_at - now).num_seconds() >= 299);
 
-        let old = hub.issue_token(now - chrono::Duration::minutes(10));
+        let old = hub.issue_token(now - chrono::Duration::minutes(10), "");
         check!(hub.verify(&old.token) == Err(TokenError::Expired));
     }
 
@@ -385,13 +390,13 @@ mod tests {
             b"another key",
             AllowedHosts::new(&[]),
         );
-        check!(hub.verify(&other.issue_token(Utc::now()).token) == Err(TokenError::Invalid));
+        check!(hub.verify(&other.issue_token(Utc::now(), "").token) == Err(TokenError::Invalid));
         check!(hub.verify("not.a.jwt") == Err(TokenError::Invalid));
     }
 
     #[test]
     fn tokens_carry_centrifugo_claims() {
-        let issued = hub(Duration::from_secs(60)).issue_token(Utc::now());
+        let issued = hub(Duration::from_secs(60)).issue_token(Utc::now(), "user-1");
         let claims = jsonwebtoken::decode::<serde_json::Value>(
             &issued.token,
             &DecodingKey::from_secret(b"test key"),
@@ -399,7 +404,7 @@ mod tests {
         )
         .unwrap()
         .claims;
-        check!(claims["sub"] == "");
+        check!(claims["sub"] == "user-1");
         check!(claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap() == 60);
     }
 
