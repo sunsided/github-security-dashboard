@@ -6,7 +6,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// Signatures accepted on provider tokens. Never HMAC: with the provider's
 /// public key as the "secret", anyone could forge tokens.
@@ -73,13 +73,11 @@ pub enum TokenError {
 pub struct KeySet {
     http: reqwest::Client,
     url: String,
-    cached: RwLock<Cached>,
-}
-
-#[derive(Default)]
-struct Cached {
-    keys: JwkSet,
-    fetched: Option<Instant>,
+    keys: RwLock<JwkSet>,
+    /// When keys were last fetched. Held across the fetch, so concurrent
+    /// tokens with an unknown key wait for one fetch instead of each
+    /// starting their own, while tokens with known keys go on verifying.
+    fetched: Mutex<Option<Instant>>,
 }
 
 impl KeySet {
@@ -88,7 +86,8 @@ impl KeySet {
         Self {
             http,
             url: url.into(),
-            cached: RwLock::new(Cached::default()),
+            keys: RwLock::new(JwkSet { keys: Vec::new() }),
+            fetched: Mutex::new(None),
         }
     }
 
@@ -129,7 +128,7 @@ impl KeySet {
 
     /// The key a token names, or the only one that fits if it names none.
     async fn key(&self, kid: Option<&str>, alg: Algorithm) -> Option<DecodingKey> {
-        let cached = self.cached.read().await;
+        let keys = self.keys.read().await;
         let fits = |jwk: &&jsonwebtoken::jwk::Jwk| {
             !matches!(jwk.algorithm, AlgorithmParameters::OctetKey(_))
                 && jwk
@@ -138,9 +137,9 @@ impl KeySet {
                     .is_none_or(|a| a == KeyAlgorithm::from(alg))
         };
         let jwk = match kid {
-            Some(kid) => cached.keys.find(kid).filter(|jwk| fits(jwk)),
+            Some(kid) => keys.find(kid).filter(|jwk| fits(jwk)),
             None => {
-                let mut candidates = cached.keys.keys.iter().filter(fits);
+                let mut candidates = keys.keys.iter().filter(fits);
                 candidates.next().filter(|_| candidates.next().is_none())
             }
         }?;
@@ -148,11 +147,11 @@ impl KeySet {
     }
 
     async fn refetch(&self) -> Result<(), TokenError> {
-        let mut cached = self.cached.write().await;
-        if cached.fetched.is_some_and(|at| at.elapsed() < MIN_REFETCH) {
+        let mut fetched = self.fetched.lock().await;
+        if fetched.is_some_and(|at| at.elapsed() < MIN_REFETCH) {
             return Ok(());
         }
-        cached.fetched = Some(Instant::now());
+        *fetched = Some(Instant::now());
         let keys = async {
             self.http
                 .get(&self.url)
@@ -165,7 +164,7 @@ impl KeySet {
         .await;
         match keys {
             Ok(keys) => {
-                cached.keys = keys;
+                *self.keys.write().await = keys;
                 Ok(())
             }
             Err(e) => {
