@@ -46,7 +46,8 @@ enum Trust {
 
 /// Checks on a token whose signature someone else verified: that it is
 /// well-formed, unexpired, and from the expected issuer for the expected
-/// audience, if those are configured. Nothing here stops a forged token;
+/// audience (both required by the configuration; empty lists here skip
+/// the check, for tests). Nothing here stops a forged token;
 /// that is the mesh's job.
 struct Unverified {
     issuers: Vec<String>,
@@ -400,6 +401,8 @@ mod tests {
         let exp = chrono::Utc::now().timestamp() + 300;
         let config = ProxyConfig {
             trust: ProxyTrust::Istio,
+            issuer: Some("https://idp".into()),
+            audiences: vec!["dash".into()],
             ..ProxyConfig::default()
         };
         let proxy = Proxy::new(&config, reqwest::Client::new(), "groups")
@@ -415,6 +418,8 @@ mod tests {
         let config = ProxyConfig {
             trust: ProxyTrust::Istio,
             payload_header: Some("x-jwt-payload".into()),
+            issuer: Some("https://idp".into()),
+            audiences: vec!["dash".into()],
             ..ProxyConfig::default()
         };
         let proxy = Proxy::new(&config, reqwest::Client::new(), "groups")

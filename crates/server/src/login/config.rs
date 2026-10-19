@@ -154,7 +154,10 @@ impl LoginConfig {
                     bail!("[login.proxy] payload_header only applies to trust = \"istio\"");
                 }
                 match proxy.trust {
-                    ProxyTrust::Token => {
+                    // With "istio" the signature goes unchecked; issuer and
+                    // audience are what's left to tell this application's
+                    // tokens from others the mesh accepts.
+                    ProxyTrust::Token | ProxyTrust::Istio => {
                         if proxy.issuer.is_none() {
                             bail!("[login.proxy] needs the issuer of the forwarded tokens");
                         }
@@ -164,7 +167,6 @@ impl LoginConfig {
                             bail!("[login.proxy] needs the audiences tokens must be issued for");
                         }
                     }
-                    ProxyTrust::Istio => {}
                     ProxyTrust::Headers => {
                         if proxy.trusted_proxies.is_empty() {
                             bail!(
@@ -241,15 +243,20 @@ mod tests {
     }
 
     #[test]
-    fn istio_needs_nothing_but_takes_payload_headers() {
-        let ok = parse("mode = \"proxy\"\n[proxy]\ntrust = \"istio\"").unwrap();
+    fn istio_needs_issuer_and_audience_and_takes_payload_headers() {
+        let istio = "mode = \"proxy\"\n[proxy]\ntrust = \"istio\"\n";
+        let claims = "issuer = \"https://idp\"\naudiences = [\"dash\"]\n";
+        let ok = parse(&format!("{istio}{claims}")).unwrap();
         check!(ok.proxy.unwrap().trust == ProxyTrust::Istio);
         check!(
-            parse(
-                "mode = \"proxy\"\n[proxy]\ntrust = \"istio\"\npayload_header = \"x-jwt-payload\""
-            )
+            parse(&format!(
+                "{istio}{claims}payload_header = \"x-jwt-payload\""
+            ))
             .is_ok()
         );
+        check!(parse(istio).is_err());
+        check!(parse(&format!("{istio}issuer = \"https://idp\"")).is_err());
+        check!(parse(&format!("{istio}audiences = [\"dash\"]")).is_err());
         check!(
             parse("mode = \"proxy\"\n[proxy]\ntrust = \"headers\"\ntrusted_proxies = [\"10.0.0.0/8\"]\npayload_header = \"x\"")
                 .is_err()

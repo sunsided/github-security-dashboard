@@ -150,8 +150,9 @@ groups = []
 # groups_header = "x-forwarded-groups"   # comma-separated
 #
 # "istio": the mesh verified the token already (RequestAuthentication); only
-# form and expiry are checked here, plus issuer and audiences if set. Needs an
-# AuthorizationPolicy that requires a valid token (see README).
+# form, expiry, issuer and audiences (both required) are checked here. Needs an
+# AuthorizationPolicy that requires a valid token (see README). With sidecars,
+# also set trusted_proxies = ["127.0.0.6/32"], the sidecar's inbound address.
 # trust = "istio"
 # payload_header = "x-jwt-payload"   # Istio's outputPayloadToHeader, instead
 #                                    # of forwardOriginalToken
