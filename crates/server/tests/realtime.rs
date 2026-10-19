@@ -169,8 +169,10 @@ async fn anything_but_connect_first_is_a_protocol_error() {
 
 #[tokio::test]
 async fn refreshing_keeps_the_connection_and_expiry_ends_it() {
+    // `exp` is whole seconds, so a token lives between `ttl - 1` and `ttl`
+    // seconds; with three, the refresh below still has a second to spare.
     let config = RealtimeConfig {
-        token_ttl: Duration::from_secs(2),
+        token_ttl: Duration::from_secs(3),
         ..RealtimeConfig::default()
     };
     let (addr, hub) = serve(config).await;
