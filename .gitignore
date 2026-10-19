@@ -30,3 +30,6 @@
 /Taskfile.yml
 /.task/
 /web/.task/
+
+# Container image SBOM (task docker:sbom)
+/sbom/

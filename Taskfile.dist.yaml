@@ -130,6 +130,22 @@ tasks:
     cmds:
       - docker compose down
 
+  docker:build:
+    desc: Build the container image (scratch, static musl server, SBOM at /server.cdx.json)
+    preconditions:
+      - *docker
+    vars:
+      IMAGE: '{{ .IMAGE | default "github-security-dashboard:dev" }}'
+    cmds:
+      - docker buildx build --load -t {{.IMAGE}} {{.CLI_ARGS}} .
+
+  docker:sbom:
+    desc: Write the image's CycloneDX SBOM to sbom/server.cdx.json
+    preconditions:
+      - *docker
+    cmds:
+      - docker buildx build --target sbom --output sbom {{.CLI_ARGS}} .
+
   db:psql:
     desc: Open psql on the development PostgreSQL
     interactive: true
