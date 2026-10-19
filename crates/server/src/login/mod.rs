@@ -8,8 +8,8 @@
 //! - `oidc`: the server signs users in itself, with the authorization code
 //!   flow and PKCE, and keeps them signed in with a session cookie.
 //!
-//! In both of the latter, [`require`] guards everything but `/auth/*` and
-//! `/healthz`, and `[login.allow]` narrows down who gets in.
+//! In both of the latter, [`require`] guards everything but the sign-in
+//! flow's own routes and `/healthz`, and `[login.allow]` narrows down who gets in.
 
 mod config;
 mod keys;
@@ -33,6 +33,8 @@ use std::time::Duration;
 /// Where the identity provider sends users back to.
 pub const CALLBACK_PATH: &str = "/auth/callback";
 const LOGIN_PATH: &str = "/auth/login";
+const LOGOUT_PATH: &str = "/auth/logout";
+const SIGNED_OUT_PATH: &str = "/auth/signed-out";
 
 /// A signed-in user, available to handlers as an [`Extension`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,8 +189,8 @@ impl Login {
             Method::Oidc(_) => router
                 .route(LOGIN_PATH, get(oidc::login))
                 .route(CALLBACK_PATH, get(oidc::callback))
-                .route("/auth/logout", post(oidc::logout))
-                .route("/auth/signed-out", get(oidc::signed_out)),
+                .route(LOGOUT_PATH, post(oidc::logout))
+                .route(SIGNED_OUT_PATH, get(oidc::signed_out)),
             _ => router,
         };
         router.with_state(Arc::clone(self))
@@ -196,8 +198,17 @@ impl Login {
 }
 
 /// Paths everyone may reach: the sign-in flow itself, and liveness probes.
+/// Exact matches only; paths aren't normalized, so a prefix would also let
+/// `/auth/../api/summary` through to the UI fallback.
 fn is_public(path: &str) -> bool {
-    path.starts_with("/auth/") || path == "/healthz"
+    [
+        LOGIN_PATH,
+        CALLBACK_PATH,
+        LOGOUT_PATH,
+        SIGNED_OUT_PATH,
+        "/healthz",
+    ]
+    .contains(&path)
 }
 
 /// Lets signed-in, allowed users through, with their [`User`] attached.
@@ -370,5 +381,7 @@ mod tests {
         check!(!is_public("/api/summary"));
         check!(!is_public("/"));
         check!(!is_public("/authx"));
+        check!(!is_public("/auth/"));
+        check!(!is_public("/auth/../api/summary"));
     }
 }

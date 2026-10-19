@@ -11,7 +11,7 @@
 //! neither passes for the other, nor for a live-update token.
 
 use super::keys::{KeySet, Metadata};
-use super::{IdentityClaims, LOGIN_PATH, Login, Method, User};
+use super::{IdentityClaims, LOGIN_PATH, Login, Method, SIGNED_OUT_PATH, User};
 use anyhow::{Context, bail};
 use axum::Json;
 use axum::extract::{Query, State};
@@ -409,7 +409,7 @@ pub async fn logout(State(login): State<Arc<Login>>) -> Response {
     let Some(oidc) = oidc(&login) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mut response = Json(serde_json::json!({ "redirect": "/auth/signed-out" })).into_response();
+    let mut response = Json(serde_json::json!({ "redirect": SIGNED_OUT_PATH })).into_response();
     response
         .headers_mut()
         .append(header::SET_COOKIE, oidc.clear(SESSION_COOKIE));

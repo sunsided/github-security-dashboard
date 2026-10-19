@@ -225,6 +225,12 @@ async fn proxy_tokens_are_verified() {
         check!(response.status() == StatusCode::UNAUTHORIZED, "{bad}");
     }
 
+    let (response, _) = send(&app, request("GET", "/auth/../api/summary", &[])).await;
+    check!(
+        response.status() == StatusCode::UNAUTHORIZED,
+        "no detour through /auth/"
+    );
+
     let (response, _) = send(&app, request("GET", "/healthz", &[])).await;
     check!(response.status() == StatusCode::OK, "probes need no token");
 }
