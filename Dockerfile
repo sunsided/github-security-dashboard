@@ -7,7 +7,7 @@
 #   docker build -t github-security-dashboard .
 #   docker build --target sbom --output sbom .   # just the SBOM, into ./sbom
 
-FROM node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS web
+FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS web
 WORKDIR /src/web
 RUN corepack enable
 COPY web/package.json web/yarn.lock web/.yarnrc.yml ./
